@@ -1,96 +1,215 @@
 package com.locationalarm.app.ui.home
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.locationalarm.app.data.model.Alarm
+import com.locationalarm.app.ui.theme.Border
 import com.locationalarm.app.ui.theme.DeepNavy
-import com.locationalarm.app.ui.theme.LocationAlarmTheme
+import com.locationalarm.app.ui.theme.ForestGreen
 import com.locationalarm.app.ui.theme.SecondaryText
 import com.locationalarm.app.ui.theme.WarmAmber
 
-/** Temporary phase-one screen; alarms are introduced with persistence in a later phase. */
+private sealed interface HomeDestination {
+    data object List : HomeDestination
+    data class Editor(val alarm: Alarm?) : HomeDestination
+}
+
 @Composable
-fun HomeScreen(modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background,
-    ) {
+fun LocationAlarmApp(viewModel: AlarmViewModel, modifier: Modifier = Modifier) {
+    val alarms by viewModel.alarms.collectAsState()
+    var destination by remember { mutableStateOf<HomeDestination>(HomeDestination.List) }
+
+    when (val currentDestination = destination) {
+        HomeDestination.List -> HomeScreen(
+            alarms = alarms,
+            onCreateAlarm = { destination = HomeDestination.Editor(null) },
+            onAlarmClick = { destination = HomeDestination.Editor(it) },
+            onEnabledChange = viewModel::setEnabled,
+            modifier = modifier,
+        )
+
+        is HomeDestination.Editor -> AlarmEditorScreen(
+            alarm = currentDestination.alarm,
+            onBack = { destination = HomeDestination.List },
+            onSave = {
+                viewModel.save(it)
+                destination = HomeDestination.List
+            },
+            onDelete = { alarm ->
+                viewModel.delete(alarm)
+                destination = HomeDestination.List
+            },
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+fun HomeScreen(
+    alarms: List<Alarm>,
+    onCreateAlarm: () -> Unit,
+    onAlarmClick: (Alarm) -> Unit,
+    onEnabledChange: (Alarm, Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 32.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 28.dp),
         ) {
-            Text(text = "Location Alarm", style = MaterialTheme.typography.headlineSmall)
+            Text("Location Alarm", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "Arrive with confidence.",
+                "Arrive with confidence.",
                 color = SecondaryText,
                 style = MaterialTheme.typography.bodyLarge,
             )
+            Spacer(Modifier.height(28.dp))
 
-            Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Card(
-                    modifier = Modifier.size(56.dp),
-                    shape = MaterialTheme.shapes.medium,
-                    colors = CardDefaults.cardColors(containerColor = WarmAmber.copy(alpha = 0.16f)),
-                    border = BorderStroke(1.dp, WarmAmber.copy(alpha = 0.40f)),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                ) {}
-                Spacer(Modifier.height(20.dp))
-                Text(text = "No location alarms yet", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "Create an alarm for a place and we'll let you know when you arrive.",
-                    modifier = Modifier.padding(horizontal = 18.dp),
-                    color = SecondaryText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    textAlign = TextAlign.Center,
-                )
+            if (alarms.isEmpty()) {
+                EmptyAlarmState(Modifier.weight(1f))
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    item {
+                        Text(
+                            text = "YOUR ALARMS",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = SecondaryText,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    items(alarms, key = { it.id }) { alarm ->
+                        AlarmCard(alarm, onAlarmClick, onEnabledChange)
+                    }
+                }
             }
 
             Button(
-                onClick = {},
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
+                onClick = onCreateAlarm,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = MaterialTheme.shapes.medium,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = DeepNavy,
-                    contentColor = Color.White,
-                ),
-            ) {
-                Text("Create location alarm")
-            }
+                colors = ButtonDefaults.buttonColors(containerColor = DeepNavy, contentColor = Color.White),
+            ) { Text("Create location alarm") }
         }
     }
 }
 
-@Preview(showBackground = true)
 @Composable
-private fun HomeScreenPreview() {
-    LocationAlarmTheme { HomeScreen() }
+private fun EmptyAlarmState(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Card(
+            modifier = Modifier.size(52.dp),
+            shape = MaterialTheme.shapes.medium,
+            colors = CardDefaults.cardColors(containerColor = WarmAmber.copy(alpha = 0.16f)),
+            border = BorderStroke(1.dp, WarmAmber.copy(alpha = 0.40f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        ) {}
+        Spacer(Modifier.height(18.dp))
+        Text("No location alarms yet", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Create an alarm for a place and we'll let you know when you arrive.",
+            modifier = Modifier.padding(horizontal = 18.dp),
+            color = SecondaryText,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+@Composable
+private fun AlarmCard(
+    alarm: Alarm,
+    onClick: (Alarm) -> Unit,
+    onEnabledChange: (Alarm, Boolean) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onClick(alarm) },
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, Border),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = alarm.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = alarm.locationName,
+                    color = SecondaryText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${alarm.radiusMeters} m", color = SecondaryText, style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = if (alarm.enabled) "Active" else "Inactive",
+                        color = if (alarm.enabled) ForestGreen else SecondaryText,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(
+                checked = alarm.enabled,
+                onCheckedChange = { onEnabledChange(alarm, it) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = ForestGreen,
+                    uncheckedThumbColor = Color.White,
+                    uncheckedTrackColor = SecondaryText.copy(alpha = 0.55f),
+                ),
+            )
+        }
+    }
 }
