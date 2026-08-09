@@ -1,0 +1,39 @@
+# Gradle
+.gradle/
+**/build/
+
+# Local SDK configuration
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+
+# Android build outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Native build
+.cxx/
+.externalNativeBuild/
+
+# Kotlin
+*.kotlin_module
+
+# Generated files
+captures/
+
+# Logs / crash dumps
+*.log
+hs_err_pid*
+replay_pid*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.swp
