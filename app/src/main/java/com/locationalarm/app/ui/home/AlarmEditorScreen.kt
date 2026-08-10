@@ -37,6 +37,8 @@ import com.locationalarm.app.ui.theme.DeepNavy
 import com.locationalarm.app.ui.theme.ForestGreen
 import com.locationalarm.app.ui.theme.MutedRed
 import com.locationalarm.app.ui.theme.SecondaryText
+import com.locationalarm.app.ui.location.LocationPickerScreen
+import com.locationalarm.app.ui.location.LocationSelection
 
 @Composable
 fun AlarmEditorScreen(
@@ -53,6 +55,28 @@ fun AlarmEditorScreen(
     var radius by remember(alarm?.id) { mutableStateOf(alarm?.radiusMeters?.toString().orEmpty()) }
     var enabled by remember(alarm?.id) { mutableStateOf(alarm?.enabled ?: true) }
     var validationMessage by remember(alarm?.id) { mutableStateOf<String?>(null) }
+    var pickingLocation by remember(alarm?.id) { mutableStateOf(false) }
+
+    if (pickingLocation) {
+        val currentLocation = latitude.toDoubleOrNull()?.let { parsedLatitude ->
+            longitude.toDoubleOrNull()?.let { parsedLongitude ->
+                radius.toIntOrNull()?.let { parsedRadius ->
+                    LocationSelection(parsedLatitude, parsedLongitude, parsedRadius)
+                }
+            }
+        }
+        LocationPickerScreen(
+            initialSelection = currentLocation,
+            onBack = { pickingLocation = false },
+            onLocationSelected = { selection ->
+                latitude = selection.latitude.toString()
+                longitude = selection.longitude.toString()
+                radius = selection.radiusMeters.toString()
+                pickingLocation = false
+            },
+        )
+        return
+    }
 
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
@@ -81,11 +105,28 @@ fun AlarmEditorScreen(
             Spacer(Modifier.height(20.dp))
             Text("LOCATION", style = MaterialTheme.typography.labelMedium, color = SecondaryText)
             Spacer(Modifier.height(10.dp))
-            EditorField("Latitude", latitude, KeyboardType.Decimal) { latitude = it }
-            Spacer(Modifier.height(14.dp))
-            EditorField("Longitude", longitude, KeyboardType.Decimal) { longitude = it }
-            Spacer(Modifier.height(14.dp))
-            EditorField("Arrival radius (metres)", radius, KeyboardType.Number) { radius = it }
+            OutlinedButton(
+                onClick = { pickingLocation = true },
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                shape = MaterialTheme.shapes.medium,
+            ) {
+                Text(if (latitude.isBlank() || longitude.isBlank()) "Select location on map" else "Change map location")
+            }
+            if (latitude.isNotBlank() && longitude.isNotBlank() && radius.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "${radius} m radius · $latitude, $longitude",
+                    color = SecondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Choose a point and arrival radius from the map.",
+                    color = SecondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             Spacer(Modifier.height(20.dp))
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
