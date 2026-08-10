@@ -1,5 +1,9 @@
 package com.locationalarm.app.ui.home
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +27,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,7 +55,13 @@ private sealed interface HomeDestination {
 @Composable
 fun LocationAlarmApp(viewModel: AlarmViewModel, modifier: Modifier = Modifier) {
     val alarms by viewModel.alarms.collectAsState()
+    val geofenceStatus by viewModel.geofenceStatus.collectAsState()
     var destination by remember { mutableStateOf<HomeDestination>(HomeDestination.List) }
+    val backgroundPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) viewModel.registerEnabledAlarms()
+    }
 
     when (val currentDestination = destination) {
         HomeDestination.List -> HomeScreen(
@@ -58,6 +69,12 @@ fun LocationAlarmApp(viewModel: AlarmViewModel, modifier: Modifier = Modifier) {
             onCreateAlarm = { destination = HomeDestination.Editor(null) },
             onAlarmClick = { destination = HomeDestination.Editor(it) },
             onEnabledChange = viewModel::setEnabled,
+            geofenceStatus = geofenceStatus,
+            onRequestBackgroundLocation = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    backgroundPermissionLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                }
+            },
             modifier = modifier,
         )
 
@@ -83,6 +100,8 @@ fun HomeScreen(
     onCreateAlarm: () -> Unit,
     onAlarmClick: (Alarm) -> Unit,
     onEnabledChange: (Alarm, Boolean) -> Unit,
+    geofenceStatus: String?,
+    onRequestBackgroundLocation: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -96,6 +115,15 @@ fun HomeScreen(
                 color = SecondaryText,
                 style = MaterialTheme.typography.bodyLarge,
             )
+            geofenceStatus?.let { status ->
+                Spacer(Modifier.height(10.dp))
+                Text(status, color = com.locationalarm.app.ui.theme.MutedRed, style = MaterialTheme.typography.bodySmall)
+                if (status.contains("all-the-time location")) {
+                    TextButton(onClick = onRequestBackgroundLocation) {
+                        Text("Allow background location", color = DeepNavy)
+                    }
+                }
+            }
             Spacer(Modifier.height(28.dp))
 
             if (alarms.isEmpty()) {
