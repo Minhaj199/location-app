@@ -26,6 +26,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,9 +35,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.Circle
@@ -68,6 +72,10 @@ fun LocationPickerScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val permissionPreferences = remember(context) {
+        context.applicationContext.getSharedPreferences(PermissionRequestPreferences, Context.MODE_PRIVATE)
+    }
     var selection by remember {
         mutableStateOf(initialSelection?.toLatLng())
     }
@@ -75,14 +83,16 @@ fun LocationPickerScreen(
         mutableStateOf(initialSelection?.radiusMeters?.toString() ?: "500")
     }
     var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
+    var locationAutoRequestAttempted by remember {
+        mutableStateOf(permissionPreferences.getBoolean(LocationAutoRequestAttemptedKey, false))
+    }
     var locationServicesEnabled by remember { mutableStateOf(context.locationServicesEnabled()) }
     var mapLoaded by remember { mutableStateOf(false) }
     var mapError by remember { mutableStateOf<String?>(null) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { permissions ->
-        hasLocationPermission = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+    ) {
+        hasLocationPermission = context.hasLocationPermission()
     }
     val cameraPositionState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(selection ?: DefaultMapCenter, if (selection == null) 4.5f else 14f)
@@ -94,13 +104,28 @@ fun LocationPickerScreen(
         else -> null
     }
 
-    LaunchedEffect(Unit) {
-        if (!hasLocationPermission) {
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasLocationPermission = context.hasLocationPermission()
+                locationServicesEnabled = context.locationServicesEnabled()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(hasLocationPermission, locationAutoRequestAttempted) {
+        if (!hasLocationPermission && !locationAutoRequestAttempted) {
+            // FINE and COARSE must be requested together; background location is a later settings step.
+            locationAutoRequestAttempted = true
+            permissionPreferences.edit().putBoolean(LocationAutoRequestAttemptedKey, true).apply()
             permissionLauncher.launch(
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
             )
         }
     }
+
     LaunchedEffect(mapLoaded) {
         if (!mapLoaded) {
             delay(MapLoadTimeoutMillis)
@@ -175,9 +200,19 @@ fun LocationPickerScreen(
             Column(modifier = Modifier.padding(20.dp)) {
                 if (!hasLocationPermission) {
                     MapNotice(
-                        "Location permission was denied. You can still place the marker manually.",
+                        "Precise location is off. You can still place the marker manually, but alarms need it to activate.",
                         color = SecondaryText,
                     )
+                    TextButton(onClick = {
+                        permissionLauncher.launch(
+                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                        )
+                    }) { Text("Allow precise location", color = DeepNavy) }
+                    TextButton(onClick = {
+                        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = android.net.Uri.fromParts("package", context.packageName, null)
+                        })
+                    }) { Text("Open location settings", color = DeepNavy) }
                     Spacer(Modifier.height(10.dp))
                 }
                 if (!locationServicesEnabled) {
@@ -253,3 +288,5 @@ private fun Context.locationServicesEnabled(): Boolean {
 
 private val DefaultMapCenter = LatLng(20.5937, 78.9629)
 private const val MapLoadTimeoutMillis = 12_000L
+private const val PermissionRequestPreferences = "permission_request_preferences"
+private const val LocationAutoRequestAttemptedKey = "location_auto_request_attempted"

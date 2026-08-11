@@ -17,6 +17,7 @@ import com.locationalarm.app.data.model.Alarm
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
+import android.util.Log
 
 sealed interface GeofenceOperationResult {
     data object Success : GeofenceOperationResult
@@ -51,10 +52,24 @@ class GeofenceManager(context: Context) {
             .build()
 
         return try {
+            Log.d(
+    "GEOFENCE_TEST",
+    "Registering alarm=${alarm.id}, lat=${alarm.latitude}, lng=${alarm.longitude}, radius=${alarm.radiusMeters}"
+)
             geofencingClient.addGeofences(request, geofencePendingIntent()).awaitCompletion()
+            
+Log.d(
+    "GEOFENCE_TEST",
+    "REGISTERED successfully alarm=${alarm.id}"
+)
             registeredAlarmIds += alarm.id
             GeofenceOperationResult.Success
         } catch (error: Exception) {
+                Log.e(
+        "GEOFENCE_TEST",
+        "REGISTRATION FAILED alarm=${alarm.id}",
+        error
+    )
             GeofenceOperationResult.Failure(error.toGeofenceMessage())
         }
     }
@@ -97,7 +112,7 @@ class GeofenceManager(context: Context) {
             ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_BACKGROUND_LOCATION) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            return "Allow all-the-time location access to activate alarms while the app is closed."
+            return "Background (all-the-time) location is required to activate alarms while the app is closed or the phone is locked. Open app settings, choose Permissions > Location, then choose Allow all the time."
         }
         return null
     }

@@ -31,13 +31,18 @@ class AlarmViewModel(
 
     fun save(alarm: Alarm) = viewModelScope.launch {
         if (alarm.id == 0L) {
-            val alarmId = repository.create(alarm)
-            if (alarm.enabled) updateGeofenceStatus(geofenceManager.registerGeofence(alarm.copy(id = alarmId)))
+            // Do not persist a new alarm as active until Android accepts its geofence.
+            val alarmId = repository.create(alarm.copy(enabled = false))
+            if (alarm.enabled) registerAndSetEnabled(alarm.copy(id = alarmId, enabled = true))
         } else {
             // Re-register after edits so the Android system receives the new coordinates or radius.
             geofenceManager.unregisterGeofence(alarm)
-            repository.update(alarm)
-            if (alarm.enabled) updateGeofenceStatus(geofenceManager.registerGeofence(alarm))
+            repository.update(alarm.copy(enabled = false))
+            if (alarm.enabled) {
+                registerAndSetEnabled(alarm)
+            } else {
+                _geofenceStatus.value = null
+            }
         }
     }
 
@@ -47,10 +52,11 @@ class AlarmViewModel(
     }
 
     fun setEnabled(alarm: Alarm, enabled: Boolean) = viewModelScope.launch {
-        repository.setEnabled(alarm.id, enabled)
         if (enabled) {
-            updateGeofenceStatus(geofenceManager.registerGeofence(alarm.copy(enabled = true)))
+            // A switch must not show Active when permission checks or registration fail.
+            registerAndSetEnabled(alarm.copy(enabled = true))
         } else {
+            repository.setEnabled(alarm.id, false)
             updateGeofenceStatus(geofenceManager.unregisterGeofence(alarm))
         }
     }
@@ -58,7 +64,13 @@ class AlarmViewModel(
     fun registerEnabledAlarms() = viewModelScope.launch {
         repository.alarms.first()
             .filter(Alarm::enabled)
-            .forEach { alarm -> updateGeofenceStatus(geofenceManager.registerGeofence(alarm)) }
+            .forEach { alarm -> registerAndSetEnabled(alarm) }
+    }
+
+    private suspend fun registerAndSetEnabled(alarm: Alarm) {
+        val result = geofenceManager.registerGeofence(alarm)
+        updateGeofenceStatus(result)
+        repository.setEnabled(alarm.id, result is GeofenceOperationResult.Success)
     }
 
     private fun updateGeofenceStatus(result: GeofenceOperationResult) {

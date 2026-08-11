@@ -13,6 +13,9 @@ interface AlarmDao {
     @Query("SELECT * FROM alarms ORDER BY createdAt DESC")
     fun observeAlarms(): Flow<List<AlarmEntity>>
 
+    @Query("SELECT * FROM alarms WHERE id = :id LIMIT 1")
+    suspend fun getAlarmById(id: Long): AlarmEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(alarm: AlarmEntity): Long
 

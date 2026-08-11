@@ -1,7 +1,12 @@
 package com.locationalarm.app.ui.home
 
 import android.Manifest
+import android.content.Intent
+import android.content.Context
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -29,6 +34,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,11 +47,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.locationalarm.app.data.model.Alarm
+import com.locationalarm.app.notification.AlarmNotificationHelper
+import com.locationalarm.app.ui.alarm.AlarmTriggeredScreen
 import com.locationalarm.app.ui.theme.Border
 import com.locationalarm.app.ui.theme.DeepNavy
 import com.locationalarm.app.ui.theme.ForestGreen
 import com.locationalarm.app.ui.theme.SecondaryText
 import com.locationalarm.app.ui.theme.WarmAmber
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 
 private sealed interface HomeDestination {
     data object List : HomeDestination
@@ -53,14 +65,65 @@ private sealed interface HomeDestination {
 }
 
 @Composable
-fun LocationAlarmApp(viewModel: AlarmViewModel, modifier: Modifier = Modifier) {
+fun LocationAlarmApp(
+    viewModel: AlarmViewModel,
+    triggeredAlarmId: Long?,
+    onDismissTriggeredAlarm: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val alarms by viewModel.alarms.collectAsState()
     val geofenceStatus by viewModel.geofenceStatus.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val permissionPreferences = remember(context) {
+        context.applicationContext.getSharedPreferences(PermissionRequestPreferences, Context.MODE_PRIVATE)
+    }
+    val backgroundMayBeRestricted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+        !(context.getSystemService(Context.POWER_SERVICE) as PowerManager)
+            .isIgnoringBatteryOptimizations(context.packageName)
     var destination by remember { mutableStateOf<HomeDestination>(HomeDestination.List) }
-    val backgroundPermissionLauncher = rememberLauncherForActivityResult(
+    var notificationPermissionGranted by remember {
+        mutableStateOf(AlarmNotificationHelper(context).canPostNotifications())
+    }
+    var notificationAutoRequestAttempted by remember {
+        mutableStateOf(
+            permissionPreferences.getBoolean(NotificationAutoRequestAttemptedKey, false),
+        )
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) viewModel.registerEnabledAlarms()
+    ) { granted -> notificationPermissionGranted = granted }
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                notificationPermissionGranted = AlarmNotificationHelper(context).canPostNotifications()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(notificationPermissionGranted, notificationAutoRequestAttempted) {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !notificationPermissionGranted &&
+            !notificationAutoRequestAttempted
+        ) {
+            // Remember the automatic prompt across recreation so a denial is not re-requested.
+            notificationAutoRequestAttempted = true
+            permissionPreferences.edit().putBoolean(NotificationAutoRequestAttemptedKey, true).apply()
+            notificationPermissionLauncher.launch(
+                Manifest.permission.POST_NOTIFICATIONS
+            )
+        }
+    }
+
+    triggeredAlarmId?.let { alarmId ->
+        AlarmTriggeredScreen(
+            alarm = alarms.firstOrNull { it.id == alarmId },
+            onDismiss = { onDismissTriggeredAlarm(alarmId) },
+            modifier = modifier,
+        )
+        return
     }
 
     when (val currentDestination = destination) {
@@ -72,8 +135,30 @@ fun LocationAlarmApp(viewModel: AlarmViewModel, modifier: Modifier = Modifier) {
             geofenceStatus = geofenceStatus,
             onRequestBackgroundLocation = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    backgroundPermissionLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                    context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.fromParts("package", context.packageName, null)
+                    })
                 }
+            },
+            notificationPermissionMissing = !notificationPermissionGranted,
+            onRequestNotificationPermission = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    if (!notificationAutoRequestAttempted) {
+                        notificationAutoRequestAttempted = true
+                        permissionPreferences.edit().putBoolean(NotificationAutoRequestAttemptedKey, true).apply()
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    } else {
+                        context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        })
+                    }
+                }
+            },
+            backgroundMayBeRestricted = backgroundMayBeRestricted,
+            onReviewBackgroundSettings = {
+                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
+                })
             },
             modifier = modifier,
         )
@@ -94,6 +179,9 @@ fun LocationAlarmApp(viewModel: AlarmViewModel, modifier: Modifier = Modifier) {
     }
 }
 
+private const val PermissionRequestPreferences = "permission_request_preferences"
+private const val NotificationAutoRequestAttemptedKey = "notification_auto_request_attempted"
+
 @Composable
 fun HomeScreen(
     alarms: List<Alarm>,
@@ -102,6 +190,10 @@ fun HomeScreen(
     onEnabledChange: (Alarm, Boolean) -> Unit,
     geofenceStatus: String?,
     onRequestBackgroundLocation: () -> Unit,
+    notificationPermissionMissing: Boolean,
+    onRequestNotificationPermission: () -> Unit,
+    backgroundMayBeRestricted: Boolean,
+    onReviewBackgroundSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -118,10 +210,32 @@ fun HomeScreen(
             geofenceStatus?.let { status ->
                 Spacer(Modifier.height(10.dp))
                 Text(status, color = com.locationalarm.app.ui.theme.MutedRed, style = MaterialTheme.typography.bodySmall)
-                if (status.contains("all-the-time location")) {
+                if (status.contains("all-the-time")) {
                     TextButton(onClick = onRequestBackgroundLocation) {
                         Text("Allow background location", color = DeepNavy)
                     }
+                }
+            }
+            if (notificationPermissionMissing) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Notifications are off, so arrival alerts cannot be shown.",
+                    color = com.locationalarm.app.ui.theme.MutedRed,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = onRequestNotificationPermission) {
+                    Text("Allow notifications", color = DeepNavy)
+                }
+            }
+            if (backgroundMayBeRestricted) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Battery restrictions can delay location alarms in the background.",
+                    color = SecondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = onReviewBackgroundSettings) {
+                    Text("Review app settings", color = DeepNavy)
                 }
             }
             Spacer(Modifier.height(28.dp))

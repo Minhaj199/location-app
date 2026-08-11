@@ -12,6 +12,8 @@ class AlarmRepository(private val alarmDao: AlarmDao) {
         alarms.map { it.toAlarm() }
     }
 
+    suspend fun getAlarmById(id: Long): Alarm? = alarmDao.getAlarmById(id)?.toAlarm()
+
     suspend fun create(alarm: Alarm) = alarmDao.insert(alarm.toEntity())
 
     suspend fun update(alarm: Alarm) = alarmDao.update(alarm.toEntity())
