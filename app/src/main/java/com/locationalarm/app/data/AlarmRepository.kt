@@ -12,6 +12,14 @@ class AlarmRepository(private val alarmDao: AlarmDao) {
         alarms.map { it.toAlarm() }
     }
 
+    val enabledAlarms: Flow<List<Alarm>> = alarmDao.observeEnabledAlarms().map { alarms ->
+        alarms.map { it.toAlarm() }
+    }
+
+    suspend fun getEnabledAlarms(): List<Alarm> = alarmDao.getEnabledAlarms().map { it.toAlarm() }
+
+    suspend fun hasEnabledAlarms(): Boolean = alarmDao.countEnabledAlarms() > 0
+
     suspend fun getAlarmById(id: Long): Alarm? = alarmDao.getAlarmById(id)?.toAlarm()
 
     suspend fun create(alarm: Alarm) = alarmDao.insert(alarm.toEntity())
