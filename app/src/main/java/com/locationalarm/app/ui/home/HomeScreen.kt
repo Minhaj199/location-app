@@ -64,6 +64,9 @@ private sealed interface HomeDestination {
     data class Editor(val alarm: Alarm?) : HomeDestination
 }
 
+// Requesting the battery-optimisation exemption is deliberate: a location alarm is useless if the
+// system suspends its watcher, which is a documented exemption case.
+@android.annotation.SuppressLint("BatteryLife")
 @Composable
 fun LocationAlarmApp(
     viewModel: AlarmViewModel,
@@ -78,9 +81,10 @@ fun LocationAlarmApp(
     val permissionPreferences = remember(context) {
         context.applicationContext.getSharedPreferences(PermissionRequestPreferences, Context.MODE_PRIVATE)
     }
-    val backgroundMayBeRestricted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+    fun isBatteryRestricted() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
         !(context.getSystemService(Context.POWER_SERVICE) as PowerManager)
             .isIgnoringBatteryOptimizations(context.packageName)
+    var backgroundMayBeRestricted by remember { mutableStateOf(isBatteryRestricted()) }
     var destination by remember { mutableStateOf<HomeDestination>(HomeDestination.List) }
     var notificationPermissionGranted by remember {
         mutableStateOf(AlarmNotificationHelper(context).canPostNotifications())
@@ -97,6 +101,8 @@ fun LocationAlarmApp(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationPermissionGranted = AlarmNotificationHelper(context).canPostNotifications()
+                // The user may have just granted the exemption in system settings.
+                backgroundMayBeRestricted = isBatteryRestricted()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -156,9 +162,23 @@ fun LocationAlarmApp(
             },
             backgroundMayBeRestricted = backgroundMayBeRestricted,
             onReviewBackgroundSettings = {
-                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.fromParts("package", context.packageName, null)
-                })
+                // Asks for the exemption directly; falls back to app settings if the OEM blocks it.
+                val requested = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                data = Uri.fromParts("package", context.packageName, null)
+                            },
+                        )
+                    }.isSuccess
+                } else {
+                    false
+                }
+                if (!requested) {
+                    context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.fromParts("package", context.packageName, null)
+                    })
+                }
             },
             modifier = modifier,
         )
@@ -230,12 +250,13 @@ fun HomeScreen(
             if (backgroundMayBeRestricted) {
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "Battery restrictions can delay location alarms in the background.",
+                    "Battery optimisation is on. Android may stop location tracking while the app " +
+                        "is closed, so alarms can be delayed or missed.",
                     color = SecondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 TextButton(onClick = onReviewBackgroundSettings) {
-                    Text("Review app settings", color = DeepNavy)
+                    Text("Allow unrestricted background use", color = DeepNavy)
                 }
             }
             Spacer(Modifier.height(28.dp))

@@ -6,7 +6,20 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Re-arms geofences and the location watcher after a reboot, which clears both. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Lets the alarm screen appear over the lock screen; auto-granted to alarm apps. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Watchdog that revives the location watcher if the system kills it. USE_EXACT_ALARM is
+         auto-granted to alarm apps; SCHEDULE_EXACT_ALARM covers Android 12. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission
+        android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="true"
@@ -19,12 +32,35 @@
         <receiver
             android:name=".geofence.GeofenceBroadcastReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".monitor.MonitorWatchdogReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".monitor.BootCompletedReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <service
             android:name=".alarm.AlarmPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <!-- Keeps the process alive so arrival detection survives the app being swiped away. -->
+        <service
+            android:name=".monitor.LocationMonitorService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="location" />
+        <!-- showWhenLocked/turnScreenOn are set in code only while an alarm is firing, so the
+             alarm list is not exposed on the lock screen the rest of the time. -->
         <activity
             android:name=".MainActivity"
+            android:launchMode="singleTop"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

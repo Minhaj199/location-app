@@ -6,9 +6,10 @@ import android.content.Intent
 import android.util.Log
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingEvent
-import com.locationalarm.app.alarm.AlarmPlaybackService
+import com.locationalarm.app.alarm.AlarmTrigger
 import com.locationalarm.app.data.AlarmRepository
 import com.locationalarm.app.data.local.AppDatabase
+import com.locationalarm.app.monitor.MonitorController
 import com.locationalarm.app.notification.AlarmNotificationHelper
 import com.locationalarm.app.notification.GeofenceEventDeduplicator
 import kotlinx.coroutines.CoroutineScope
@@ -19,16 +20,8 @@ import kotlinx.coroutines.launch
 /** Receives Android geofence ENTER events and begins the location-alarm response. */
 class GeofenceBroadcastReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        Log.d(
-    "GEOFENCE_TEST",
-    "BroadcastReceiver received action=${intent.action}"
-)
         if (intent.action != ACTION_GEOFENCE_EVENT) return
         val event = GeofencingEvent.fromIntent(intent) ?: return
-        Log.d(
-    "GEOFENCE_TEST",
-    "Geofence event received transition=${event.geofenceTransition}"
-)
         if (event.hasError()) {
             Log.e(LogTag, "Geofence event failed: ${event.errorCode}")
             return
@@ -59,18 +52,15 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                             if (!notificationHelper.showArrivalNotification(alarm)) {
                                 Log.w(LogTag, "Notification permission is unavailable for alarm $alarmId.")
                             }
-                            try {
-                                Log.d(
-    "GEOFENCE_TEST",
-    "Starting alarm service for alarm=${alarm.id}"
-)
-                                AlarmPlaybackService.start(appContext, alarm)
-                            } catch (error: Exception) {
-                                Log.e(LogTag, "Unable to start alarm playback for $alarmId.", error)
-                            }
+                            // Never starts the foreground service directly: this broadcast can wake a
+                            // killed process, where Android 12+ refuses background service starts.
+                            AlarmTrigger.fire(appContext, alarm)
                         }
                     }
                 }
+                // The geofence firing at all proves an alarm is live, so make sure the always-on
+                // watcher is running too — it is what keeps working if geofences stop arriving.
+                MonitorController.sync(appContext)
             } finally {
                 pendingResult.finish()
             }

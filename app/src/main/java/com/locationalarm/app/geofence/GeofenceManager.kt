@@ -38,13 +38,15 @@ class GeofenceManager(context: Context) {
                 "Alarm radius must be between $MinRadiusMeters and $MaxRadiusMeters metres.",
             )
         }
-        if (registeredAlarmIds.contains(alarm.id)) return GeofenceOperationResult.Success
-
+        // Deliberately no "already registered" short-circuit: Android drops geofences on reboot and
+        // when Play services restarts, so an in-memory flag would keep us from re-arming a lost one.
+        // addGeofences replaces any existing registration with the same request id.
         val geofence = Geofence.Builder()
             .setRequestId(requestIdFor(alarm.id))
             .setCircularRegion(alarm.latitude, alarm.longitude, alarm.radiusMeters.toFloat())
             .setExpirationDuration(Geofence.NEVER_EXPIRE)
             .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER)
+            .setNotificationResponsiveness(0)
             .build()
         val request = GeofencingRequest.Builder()
             .setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER)
@@ -52,24 +54,12 @@ class GeofenceManager(context: Context) {
             .build()
 
         return try {
-            Log.d(
-    "GEOFENCE_TEST",
-    "Registering alarm=${alarm.id}, lat=${alarm.latitude}, lng=${alarm.longitude}, radius=${alarm.radiusMeters}"
-)
             geofencingClient.addGeofences(request, geofencePendingIntent()).awaitCompletion()
-            
-Log.d(
-    "GEOFENCE_TEST",
-    "REGISTERED successfully alarm=${alarm.id}"
-)
+            Log.i(LogTag, "Registered geofence for alarm ${alarm.id}.")
             registeredAlarmIds += alarm.id
             GeofenceOperationResult.Success
         } catch (error: Exception) {
-                Log.e(
-        "GEOFENCE_TEST",
-        "REGISTRATION FAILED alarm=${alarm.id}",
-        error
-    )
+            Log.e(LogTag, "Failed to register geofence for alarm ${alarm.id}.", error)
             GeofenceOperationResult.Failure(error.toGeofenceMessage())
         }
     }
@@ -136,6 +126,7 @@ Log.d(
     }
 
     private companion object {
+        const val LogTag = "LocationAlarmGeofence"
         const val GeofenceRequestPrefix = "location_alarm_"
         const val GeofencePendingIntentRequestCode = 4105
         const val MinRadiusMeters = 50

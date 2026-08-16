@@ -13,6 +13,15 @@ interface AlarmDao {
     @Query("SELECT * FROM alarms ORDER BY createdAt DESC")
     fun observeAlarms(): Flow<List<AlarmEntity>>
 
+    @Query("SELECT * FROM alarms WHERE enabled = 1 ORDER BY createdAt DESC")
+    fun observeEnabledAlarms(): Flow<List<AlarmEntity>>
+
+    @Query("SELECT * FROM alarms WHERE enabled = 1 ORDER BY createdAt DESC")
+    suspend fun getEnabledAlarms(): List<AlarmEntity>
+
+    @Query("SELECT COUNT(*) FROM alarms WHERE enabled = 1")
+    suspend fun countEnabledAlarms(): Int
+
     @Query("SELECT * FROM alarms WHERE id = :id LIMIT 1")
     suspend fun getAlarmById(id: Long): AlarmEntity?
 
