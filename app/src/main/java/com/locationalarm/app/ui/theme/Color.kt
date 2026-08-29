@@ -2,13 +2,13 @@ package com.locationalarm.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val DeepNavy = Color(0xFF172033)
-val SlateBlue = Color(0xFF34415A)
-val WarmOffWhite = Color(0xFFF7F5F0)
+val DeepNavy = Color(0xFF071A2B)
+val SlateBlue = Color(0xFF102A40)
+val WarmOffWhite = Color(0xFF071A2B)
 val SurfaceWhite = Color(0xFFFFFFFF)
 val WarmAmber = Color(0xFFE6A23C)
-val MainText = Color(0xFF171A21)
-val SecondaryText = Color(0xFF697386)
-val ForestGreen = Color(0xFF3F7652)
+val MainText = Color(0xFFFFFFFF)
+val SecondaryText = Color(0xFFB8C4CF)
+val ForestGreen = Color(0xFF12B8F3)
 val MutedRed = Color(0xFFB94A48)
-val Border = Color(0xFFDCDDD8)
+val Border = Color(0x29FFFFFF)

@@ -7,6 +7,7 @@ import android.location.LocationManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,14 +16,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,7 +37,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -50,13 +55,7 @@ import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.google.maps.android.compose.rememberUpdatedMarkerState
-import com.locationalarm.app.ui.theme.Border
-import com.locationalarm.app.ui.theme.DeepNavy
-import com.locationalarm.app.ui.theme.ForestGreen
-import com.locationalarm.app.ui.theme.MutedRed
-import com.locationalarm.app.ui.theme.SecondaryText
 import kotlinx.coroutines.delay
-import java.util.Locale
 
 data class LocationSelection(
     val latitude: Double,
@@ -71,17 +70,14 @@ fun LocationPickerScreen(
     onLocationSelected: (LocationSelection) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val accent = Color(0xFF12B8F3)
     val permissionPreferences = remember(context) {
         context.applicationContext.getSharedPreferences(PermissionRequestPreferences, Context.MODE_PRIVATE)
     }
-    var selection by remember {
-        mutableStateOf(initialSelection?.toLatLng())
-    }
-    var radiusText by remember {
-        mutableStateOf(initialSelection?.radiusMeters?.toString() ?: "500")
-    }
+    var selection by remember { mutableStateOf(initialSelection?.toLatLng()) }
+    var radiusText by remember { mutableStateOf(initialSelection?.radiusMeters?.toString() ?: "500") }
     var hasLocationPermission by remember { mutableStateOf(context.hasLocationPermission()) }
     var locationAutoRequestAttempted by remember {
         mutableStateOf(permissionPreferences.getBoolean(LocationAutoRequestAttemptedKey, false))
@@ -91,9 +87,7 @@ fun LocationPickerScreen(
     var mapError by remember { mutableStateOf<String?>(null) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) {
-        hasLocationPermission = context.hasLocationPermission()
-    }
+    ) { hasLocationPermission = context.hasLocationPermission() }
     val cameraPositionState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(selection ?: DefaultMapCenter, if (selection == null) 4.5f else 14f)
     }
@@ -114,10 +108,8 @@ fun LocationPickerScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-
     LaunchedEffect(hasLocationPermission, locationAutoRequestAttempted) {
         if (!hasLocationPermission && !locationAutoRequestAttempted) {
-            // FINE and COARSE must be requested together; background location is a later settings step.
             locationAutoRequestAttempted = true
             permissionPreferences.edit().putBoolean(LocationAutoRequestAttemptedKey, true).apply()
             permissionLauncher.launch(
@@ -125,153 +117,163 @@ fun LocationPickerScreen(
             )
         }
     }
-
     LaunchedEffect(mapLoaded) {
         if (!mapLoaded) {
             delay(MapLoadTimeoutMillis)
-            if (!mapLoaded) {
-                mapError = "The map did not load. Check your connection and Google Maps API key."
-            }
+            if (!mapLoaded) mapError = "The map did not load. Check your connection and Google Maps API key."
         }
     }
 
-    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(onClick = onBack) { Text("‹  Back", color = DeepNavy) }
-                Spacer(Modifier.width(8.dp))
-                Text("Choose location", style = MaterialTheme.typography.titleLarge)
+    Box(modifier = modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().background(Color(0xFF071A2B)))
+        Box(
+            modifier = Modifier.fillMaxSize().background(
+                Brush.verticalGradient(listOf(Color(0xA0030A13), Color(0x62030A13), Color(0xE8040B15))),
+            ),
+        )
+        Column(
+            modifier = Modifier.fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 20.dp),
+        ) {
+            TextButton(onClick = onBack, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                Text("Back", color = accent)
             }
+            Spacer(Modifier.height(10.dp))
+            Text("Choose location", color = Color.White, style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(5.dp))
             Text(
                 "Tap the map to set where this alarm should activate.",
-                modifier = Modifier.padding(horizontal = 24.dp),
-                color = SecondaryText,
+                color = Color.White.copy(alpha = 0.76f),
                 style = MaterialTheme.typography.bodyMedium,
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(18.dp))
 
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                GoogleMap(
-                    modifier = Modifier.fillMaxSize(),
-                    cameraPositionState = cameraPositionState,
-                    properties = MapProperties(isMyLocationEnabled = hasLocationPermission),
-                    uiSettings = MapUiSettings(myLocationButtonEnabled = hasLocationPermission),
-                    onMapClick = { point ->
-                        selection = point
-                        mapError = null
-                    },
-                    onMapLoaded = {
-                        mapLoaded = true
-                        mapError = null
-                    },
-                ) {
-                    selection?.let { point ->
-                        Marker(
-                            state = rememberUpdatedMarkerState(position = point),
-                            title = "Alarm location",
-                        )
-                        if (radius != null && radiusError == null) {
-                            Circle(
-                                center = point,
-                                radius = radius.toDouble(),
-                                fillColor = ForestGreen.copy(alpha = 0.14f),
-                                strokeColor = ForestGreen,
-                                strokeWidth = 2f,
+            Card(
+                modifier = Modifier.fillMaxWidth().height(330.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0x500C1625)),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    GoogleMap(
+                        modifier = Modifier.fillMaxSize(),
+                        cameraPositionState = cameraPositionState,
+                        properties = MapProperties(isMyLocationEnabled = hasLocationPermission),
+                        uiSettings = MapUiSettings(myLocationButtonEnabled = hasLocationPermission),
+                        onMapClick = { point ->
+                            selection = point
+                            mapError = null
+                        },
+                        onMapLoaded = {
+                            mapLoaded = true
+                            mapError = null
+                        },
+                    ) {
+                        selection?.let { point ->
+                            Marker(
+                                state = rememberUpdatedMarkerState(position = point),
+                                title = "Alarm location",
                             )
+                            if (radius != null && radiusError == null) {
+                                Circle(
+                                    center = point,
+                                    radius = radius.toDouble(),
+                                    fillColor = accent.copy(alpha = 0.18f),
+                                    strokeColor = accent,
+                                    strokeWidth = 2f,
+                                )
+                            }
                         }
                     }
-                }
-                if (!mapLoaded && mapError == null) {
-                    Text(
-                        "Loading map…",
-                        modifier = Modifier.align(Alignment.Center),
-                        color = DeepNavy,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                mapError?.let { message ->
-                    MapNotice(message, Modifier.align(Alignment.TopCenter).padding(16.dp), MutedRed)
-                }
-            }
-
-            Column(modifier = Modifier.padding(20.dp)) {
-                if (!hasLocationPermission) {
-                    MapNotice(
-                        "Precise location is off. You can still place the marker manually, but alarms need it to activate.",
-                        color = SecondaryText,
-                    )
-                    TextButton(onClick = {
-                        permissionLauncher.launch(
-                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                    if (!mapLoaded && mapError == null) {
+                        Text(
+                            "Loading map...",
+                            modifier = Modifier.align(Alignment.Center),
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyMedium,
                         )
-                    }) { Text("Allow precise location", color = DeepNavy) }
-                    TextButton(onClick = {
-                        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = android.net.Uri.fromParts("package", context.packageName, null)
-                        })
-                    }) { Text("Open location settings", color = DeepNavy) }
-                    Spacer(Modifier.height(10.dp))
-                }
-                if (!locationServicesEnabled) {
-                    MapNotice(
-                        "Location services are off. You can still choose any point on the map.",
-                        color = SecondaryText,
-                    )
-                    TextButton(onClick = { locationServicesEnabled = context.locationServicesEnabled() }) {
-                        Text("Check again", color = DeepNavy)
+                    }
+                    mapError?.let { message ->
+                        PickerNotice(message, Modifier.align(Alignment.TopCenter).padding(14.dp), Color(0xFFFFA7A0))
                     }
                 }
-                OutlinedTextField(
-                    value = radiusText,
-                    onValueChange = { radiusText = it.filter(Char::isDigit) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Arrival radius (metres)") },
-                    supportingText = { Text(radiusError ?: "The circle shows this arrival area.") },
-                    isError = radiusError != null,
-                    singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
-                selection?.let { point ->
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        String.format(Locale.US, "Selected: %.5f, %.5f", point.latitude, point.longitude),
-                        color = SecondaryText,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                Spacer(Modifier.height(14.dp))
-                Button(
-                    onClick = {
-                        val selectedPoint = selection ?: return@Button
-                        val selectedRadius = radius ?: return@Button
-                        onLocationSelected(
-                            LocationSelection(selectedPoint.latitude, selectedPoint.longitude, selectedRadius),
-                        )
-                    },
-                    enabled = selection != null && radiusError == null,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = DeepNavy, contentColor = Color.White),
-                    shape = MaterialTheme.shapes.medium,
-                ) { Text("Use this location") }
             }
+            Spacer(Modifier.height(14.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0x70101B2C)),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    if (!hasLocationPermission) {
+                        PickerNotice(
+                            "Precise location is off. You can still place the marker manually.",
+                            color = Color.White.copy(alpha = 0.84f),
+                        )
+                        TextButton(onClick = {
+                            permissionLauncher.launch(
+                                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                            )
+                        }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                            Text("Enable location", color = accent)
+                        }
+                    }
+                    if (!locationServicesEnabled) {
+                        PickerNotice("Location services are off.", color = Color.White.copy(alpha = 0.84f))
+                        TextButton(onClick = { locationServicesEnabled = context.locationServicesEnabled() }) {
+                            Text("Check again", color = accent)
+                        }
+                    }
+                    OutlinedTextField(
+                        value = radiusText,
+                        onValueChange = { radiusText = it.filter(Char::isDigit) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Arrival radius (metres)") },
+                        supportingText = { Text(radiusError ?: "The circle marks the arrival area.") },
+                        isError = radiusError != null,
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = accent,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.35f),
+                            focusedLabelColor = accent,
+                            unfocusedLabelColor = Color.White.copy(alpha = 0.72f),
+                            focusedSupportingTextColor = Color.White.copy(alpha = 0.65f),
+                            unfocusedSupportingTextColor = Color.White.copy(alpha = 0.65f),
+                            cursorColor = accent,
+                        ),
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Button(
+                        onClick = {
+                            val selectedPoint = selection ?: return@Button
+                            val selectedRadius = radius ?: return@Button
+                            onLocationSelected(
+                                LocationSelection(selectedPoint.latitude, selectedPoint.longitude, selectedRadius),
+                            )
+                        },
+                        enabled = selection != null && radiusError == null,
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color(0xFF06111E)),
+                        shape = RoundedCornerShape(16.dp),
+                    ) { Text("Use this location") }
+                }
+            }
+            Spacer(Modifier.height(20.dp))
         }
     }
 }
 
 @Composable
-private fun MapNotice(message: String, modifier: Modifier = Modifier, color: Color) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, Border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        shape = MaterialTheme.shapes.small,
-    ) {
-        Text(message, modifier = Modifier.padding(12.dp), color = color, style = MaterialTheme.typography.bodySmall)
-    }
+private fun PickerNotice(message: String, modifier: Modifier = Modifier, color: Color) {
+    Text(message, modifier = modifier.fillMaxWidth(), color = color, style = MaterialTheme.typography.bodySmall)
 }
 
 private fun LocationSelection.toLatLng() = LatLng(latitude, longitude)

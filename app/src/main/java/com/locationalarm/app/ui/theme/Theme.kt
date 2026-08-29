@@ -23,19 +23,20 @@ private val LightColors = lightColorScheme(
 )
 
 private val DarkColors = darkColorScheme(
-    primary = WarmAmber,
+    primary = ForestGreen,
     onPrimary = DeepNavy,
     background = DeepNavy,
     onBackground = SurfaceWhite,
     surface = SlateBlue,
     onSurface = SurfaceWhite,
+    outline = Border,
     error = MutedRed,
 )
 
 @Composable
 fun LocationAlarmTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = LightColors,
+        colorScheme = DarkColors,
         typography = AppTypography,
         content = content,
     )
