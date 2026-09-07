@@ -20,6 +20,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.locationalarm.app.alarm.AlarmTrigger
 import com.locationalarm.app.data.AlarmRepository
+import com.locationalarm.app.data.SettingsStore
 import com.locationalarm.app.data.local.AppDatabase
 import com.locationalarm.app.data.model.Alarm
 import com.locationalarm.app.notification.AlarmNotificationHelper
@@ -72,6 +73,12 @@ class LocationMonitorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Must reach startForeground within a few seconds of every start request.
         if (!promoteToForeground()) return START_NOT_STICKY
+        if (!SettingsStore.read(applicationContext).monitoringEnabled) {
+            // The master switch is off: alarms stay saved and paused, nothing may be monitored.
+            Log.i(LogTag, "Location alarm monitoring is off; stopping the watcher.")
+            stopMonitoring()
+            return START_NOT_STICKY
+        }
         if (!hasLocationPermission()) {
             Log.w(LogTag, "Location permission missing; monitoring cannot run.")
             stopMonitoring()
@@ -159,6 +166,10 @@ class LocationMonitorService : Service() {
     }
 
     private fun triggerAlarm(alarm: Alarm, distance: Float) {
+        if (!SettingsStore.read(applicationContext).arrivalAlertsEnabled) {
+            Log.i(LogTag, "Arrival alerts are disabled; alarm ${alarm.id} reached without alerting.")
+            return
+        }
         if (!deduplicator.shouldNotify(alarm.id)) {
             Log.i(LogTag, "Alarm ${alarm.id} already alerted recently; skipping.")
             return
@@ -207,8 +218,10 @@ class LocationMonitorService : Service() {
     }
 
     private fun updateNotification(nearestDistance: Float?) {
+        // The foreground-service notification itself is mandatory and cannot be suppressed while
+        // the watcher runs; the preference only controls how much detail it shows.
         val detail = nearestDistance
-            ?.takeIf { it != Float.MAX_VALUE && it > 0f }
+            ?.takeIf { it != Float.MAX_VALUE && it > 0f && SettingsStore.read(applicationContext).ongoingNotificationEnabled }
             ?.let { distance ->
                 val alarmCount = enabledAlarms.size
                 val suffix = if (alarmCount > 1) " · $alarmCount alarms" else ""

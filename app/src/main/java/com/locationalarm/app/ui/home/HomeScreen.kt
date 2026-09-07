@@ -32,16 +32,21 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -66,10 +71,14 @@ import com.google.android.gms.location.LocationServices
 import com.locationalarm.app.data.model.Alarm
 import com.locationalarm.app.notification.AlarmNotificationHelper
 import com.locationalarm.app.ui.alarm.AlarmTriggeredScreen
+import com.locationalarm.app.ui.settings.NotificationSettingsScreen
+import com.locationalarm.app.ui.settings.SettingsScreen
 import com.locationalarm.app.ui.theme.Border
 import com.locationalarm.app.ui.theme.DeepNavy
 import com.locationalarm.app.ui.theme.ForestGreen
+import com.locationalarm.app.ui.theme.MutedRed
 import com.locationalarm.app.ui.theme.SecondaryText
+import com.locationalarm.app.ui.theme.SlateBlue
 import com.locationalarm.app.ui.theme.WarmAmber
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -83,6 +92,8 @@ import java.util.Locale
 private sealed interface HomeDestination {
     data object List : HomeDestination
     data object Alarms : HomeDestination
+    data object Settings : HomeDestination
+    data object Notifications : HomeDestination
     data class Editor(val alarm: Alarm?, val returnToAlarms: Boolean) : HomeDestination
 }
 
@@ -98,6 +109,7 @@ fun LocationAlarmApp(
 ) {
     val alarms by viewModel.alarms.collectAsState()
     val geofenceStatus by viewModel.geofenceStatus.collectAsState()
+    val settings by viewModel.settings.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val permissionPreferences = remember(context) {
@@ -164,6 +176,9 @@ fun LocationAlarmApp(
             alarms = alarms,
             onCreateAlarm = { destination = HomeDestination.Editor(null, returnToAlarms = false) },
             onShowAlarms = { destination = HomeDestination.Alarms },
+            onShowSettings = { destination = HomeDestination.Settings },
+            monitoringEnabled = settings.monitoringEnabled,
+            onEnableMonitoring = { viewModel.setMonitoringEnabled(true) },
             geofenceStatus = geofenceStatus,
             onRequestBackgroundLocation = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -221,6 +236,27 @@ fun LocationAlarmApp(
             onCreateAlarm = { destination = HomeDestination.Editor(null, returnToAlarms = true) },
             onAlarmClick = { destination = HomeDestination.Editor(it, returnToAlarms = true) },
             onEnabledChange = viewModel::setEnabled,
+            onDelete = viewModel::delete,
+            modifier = modifier,
+        )
+
+        HomeDestination.Settings -> SettingsScreen(
+            settings = settings,
+            pausedAlarmCount = alarms.count(Alarm::enabled),
+            onBack = { destination = HomeDestination.List },
+            onMonitoringChange = viewModel::setMonitoringEnabled,
+            onOpenNotifications = { destination = HomeDestination.Notifications },
+            modifier = modifier,
+        )
+
+        HomeDestination.Notifications -> NotificationSettingsScreen(
+            settings = settings,
+            onBack = { destination = HomeDestination.Settings },
+            onMonitoringChange = viewModel::setMonitoringEnabled,
+            onArrivalAlertsChange = viewModel::setArrivalAlertsEnabled,
+            onSoundChange = viewModel::setSoundEnabled,
+            onVibrationChange = viewModel::setVibrationEnabled,
+            onOngoingNotificationChange = viewModel::setOngoingNotificationEnabled,
             modifier = modifier,
         )
 
@@ -250,6 +286,9 @@ fun HomeScreen(
     alarms: List<Alarm>,
     onCreateAlarm: () -> Unit,
     onShowAlarms: () -> Unit,
+    onShowSettings: () -> Unit,
+    monitoringEnabled: Boolean,
+    onEnableMonitoring: () -> Unit,
     geofenceStatus: String?,
     onRequestBackgroundLocation: () -> Unit,
     notificationPermissionMissing: Boolean,
@@ -299,7 +338,15 @@ fun HomeScreen(
                 CompactStatus("Location alerts may be delayed", period.accent, onReviewBackgroundSettings)
             }
             Spacer(Modifier.weight(1f))
-            ActiveAlarmsCard(activeAlarms, nearestAlarm, period.accent)
+            if (monitoringEnabled) {
+                ActiveAlarmsCard(activeAlarms, nearestAlarm, period.accent)
+            } else {
+                MonitoringPausedCard(
+                    pausedAlarmCount = activeAlarms.size,
+                    accent = period.accent,
+                    onEnableMonitoring = onEnableMonitoring,
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Button(
                 onClick = onCreateAlarm,
@@ -310,7 +357,7 @@ fun HomeScreen(
                 Text("+  Create Location Alarm", style = MaterialTheme.typography.titleMedium)
             }
             Spacer(Modifier.height(12.dp))
-            MinimalNavigation(period.accent, onShowAlarms)
+            MinimalNavigation(period.accent, onShowAlarms, onShowSettings)
         }
     }
 }
@@ -385,7 +432,7 @@ private fun ActiveAlarmsCard(
     ) {
         Column(modifier = Modifier.padding(horizontal = 15.dp, vertical = 12.dp)) {
             Text(
-                if (activeAlarms.isEmpty()) "No active alarms" else "${activeAlarms.size} active",
+                if (activeAlarms.isEmpty()) "No active alarms" else "\uD83D\uDD14 ${activeAlarms.size} Active Location Alarms",
                 color = accent,
                 style = MaterialTheme.typography.labelLarge,
             )
@@ -394,8 +441,50 @@ private fun ActiveAlarmsCard(
                 Text("Create an alarm to get started", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.bodySmall)
             } else {
                 Spacer(Modifier.height(4.dp))
-                Text(nearestAlarm.name, color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Text("Next: ${nearestAlarm.name}", color = Color.White, style = MaterialTheme.typography.titleMedium)
                 Text("Alert when I arrive", color = Color.White.copy(alpha = 0.68f), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MonitoringPausedCard(
+    pausedAlarmCount: Int,
+    accent: Color,
+    onEnableMonitoring: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0x522C1810)),
+        border = BorderStroke(1.dp, WarmAmber.copy(alpha = 0.45f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 15.dp, vertical = 12.dp)) {
+            Text("\u26A0 Location monitoring is off", color = WarmAmber, style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Your location alarms are currently paused.",
+                color = Color.White.copy(alpha = 0.84f),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (pausedAlarmCount > 0) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "$pausedAlarmCount ${if (pausedAlarmCount == 1) "alarm" else "alarms"} paused",
+                    color = Color.White.copy(alpha = 0.68f),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = onEnableMonitoring,
+                modifier = Modifier.fillMaxWidth().height(42.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color(0xFF06111E)),
+            ) {
+                Text("Turn On Monitoring", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
@@ -415,7 +504,7 @@ private fun CompactStatus(message: String, accent: Color, onReview: () -> Unit) 
 }
 
 @Composable
-private fun MinimalNavigation(accent: Color, onShowAlarms: () -> Unit) {
+private fun MinimalNavigation(accent: Color, onShowAlarms: () -> Unit, onShowSettings: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -428,7 +517,7 @@ private fun MinimalNavigation(accent: Color, onShowAlarms: () -> Unit) {
         NavigationLabel("Home", accent)
         NavigationLabel("Alarms", Color.White.copy(alpha = 0.72f), onShowAlarms)
         NavigationLabel("Places", Color.White.copy(alpha = 0.72f))
-        NavigationLabel("Settings", Color.White.copy(alpha = 0.72f))
+        NavigationLabel("Settings", Color.White.copy(alpha = 0.72f), onShowSettings)
     }
 }
 
@@ -449,11 +538,13 @@ private fun AlarmListScreen(
     onCreateAlarm: () -> Unit,
     onAlarmClick: (Alarm) -> Unit,
     onEnabledChange: (Alarm, Boolean) -> Unit,
+    onDelete: (Alarm) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val hasLocationPermission = context.hasHomeLocationPermission()
     val locationState = rememberHomeLocation(hasLocationPermission)
+    var pendingDelete by remember { mutableStateOf<Alarm?>(null) }
     Box(modifier = modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize().background(DeepNavy))
         Box(
@@ -492,6 +583,7 @@ private fun AlarmListScreen(
                             accent = ForestGreen,
                             onClick = onAlarmClick,
                             onEnabledChange = onEnabledChange,
+                            onDeleteRequest = { pendingDelete = it },
                         )
                     }
                 }
@@ -504,6 +596,28 @@ private fun AlarmListScreen(
             ) {
                 Text("+  Create Location Alarm", style = MaterialTheme.typography.titleMedium)
             }
+        }
+
+        pendingDelete?.let { alarm ->
+            AlertDialog(
+                onDismissRequest = { pendingDelete = null },
+                title = { Text("Delete location alarm?", color = Color.White) },
+                text = { Text("${alarm.name} will be permanently removed.", color = SecondaryText) },
+                containerColor = SlateBlue,
+                confirmButton = {
+                    TextButton(onClick = {
+                        onDelete(alarm)
+                        pendingDelete = null
+                    }) {
+                        Text("Delete", color = MutedRed)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDelete = null }) {
+                        Text("Cancel", color = Color.White.copy(alpha = 0.8f))
+                    }
+                },
+            )
         }
     }
 }
@@ -538,12 +652,13 @@ private fun CurrentLocationCard(
 @Composable
 private fun EmptyAlarmState() {
     GlassCard {
-        Text("No location alarms yet", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        Text("No Location Alarms Yet", color = Color.White, style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(6.dp))
-        Text("Create an alarm for a place and the app will alert you when you arrive.", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.bodyMedium)
+        Text("Create an alarm and get alerted when you arrive at a place.", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.bodyMedium)
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AlarmCard(
     alarm: Alarm,
@@ -553,7 +668,37 @@ private fun AlarmCard(
     accent: Color,
     onClick: (Alarm) -> Unit,
     onEnabledChange: (Alarm, Boolean) -> Unit,
+    onDeleteRequest: (Alarm) -> Unit,
 ) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart) onDeleteRequest(alarm)
+            // Deletion always waits for the confirmation dialog, so never settle into "dismissed".
+            false
+        },
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = false,
+        enableDismissFromEndToStart = true,
+        backgroundContent = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MutedRed),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Text(
+                    "DELETE",
+                    modifier = Modifier.padding(horizontal = 22.dp),
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        },
+    ) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick(alarm) },
         shape = RoundedCornerShape(14.dp),
@@ -567,7 +712,7 @@ private fun AlarmCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = alarm.name,
+                    text = "\uD83D\uDCCD ${alarm.name}",
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White,
                     fontWeight = FontWeight.SemiBold,
@@ -606,6 +751,7 @@ private fun AlarmCard(
                 ),
             )
         }
+    }
     }
 }
 

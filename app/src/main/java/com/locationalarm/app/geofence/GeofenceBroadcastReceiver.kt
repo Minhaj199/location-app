@@ -8,6 +8,7 @@ import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingEvent
 import com.locationalarm.app.alarm.AlarmTrigger
 import com.locationalarm.app.data.AlarmRepository
+import com.locationalarm.app.data.SettingsStore
 import com.locationalarm.app.data.local.AppDatabase
 import com.locationalarm.app.monitor.MonitorController
 import com.locationalarm.app.notification.AlarmNotificationHelper
@@ -39,6 +40,12 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         receiverScope.launch {
             try {
                 val appContext = context.applicationContext
+                val settings = SettingsStore.read(appContext)
+                if (!settings.monitoringEnabled) {
+                    // The master switch is off: alarms stay saved and paused, nothing may trigger.
+                    Log.i(LogTag, "Location alarm monitoring is off; ignoring ENTER event.")
+                    return@launch
+                }
                 val repository = AlarmRepository(AppDatabase.getInstance(appContext).alarmDao())
                 val notificationHelper = AlarmNotificationHelper(appContext)
                 val deduplicator = GeofenceEventDeduplicator(appContext)
@@ -48,6 +55,8 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                         alarm == null -> Log.i(LogTag, "Ignoring deleted alarm $alarmId.")
                         !alarm.enabled -> Log.i(LogTag, "Ignoring disabled alarm $alarmId.")
                         !deduplicator.shouldNotify(alarmId) -> Log.i(LogTag, "Ignoring duplicate ENTER for $alarmId.")
+                        !settings.arrivalAlertsEnabled ->
+                            Log.i(LogTag, "Arrival alerts are disabled; alarm $alarmId reached without alerting.")
                         else -> {
                             if (!notificationHelper.showArrivalNotification(alarm)) {
                                 Log.w(LogTag, "Notification permission is unavailable for alarm $alarmId.")

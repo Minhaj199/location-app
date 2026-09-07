@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.locationalarm.app.data.AlarmRepository
+import com.locationalarm.app.data.SettingsStore
 import com.locationalarm.app.data.local.AppDatabase
 import com.locationalarm.app.geofence.GeofenceManager
 
@@ -23,11 +24,16 @@ import com.locationalarm.app.geofence.GeofenceManager
  * so it can put the watcher back on its feet.
  */
 object MonitorController {
-    /** Starts the watcher when at least one alarm is enabled, and stops it when none are. */
+    /**
+     * Starts the watcher when monitoring is on and at least one alarm is enabled, and stops it
+     * otherwise. The master switch always wins: while it is off nothing may be monitored, even if
+     * individual alarms remain enabled.
+     */
     suspend fun sync(context: Context) {
         val appContext = context.applicationContext
         val repository = AlarmRepository(AppDatabase.getInstance(appContext).alarmDao())
-        if (repository.hasEnabledAlarms()) start(appContext) else stop(appContext)
+        val monitoringEnabled = SettingsStore.read(appContext).monitoringEnabled
+        if (monitoringEnabled && repository.hasEnabledAlarms()) start(appContext) else stop(appContext)
     }
 
     fun start(context: Context) {
@@ -70,7 +76,9 @@ object MonitorController {
             val result = geofenceManager.registerGeofence(alarm)
             Log.i(LogTag, "Restored geofence for alarm ${alarm.id}: $result")
         }
-        start(appContext)
+        // Geofences stay armed even while monitoring is paused; sync() is what keeps the watcher
+        // itself from starting until the user turns the master switch back on.
+        sync(appContext)
     }
 
     fun scheduleWatchdog(context: Context, delayMillis: Long = WatchdogIntervalMillis) {

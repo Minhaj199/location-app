@@ -16,40 +16,47 @@ object AlarmPlaybackManager {
     private var vibrator: Vibrator? = null
     private var activeAlarmId: Long? = null
 
-    fun start(context: Context, alarmId: Long): Boolean = synchronized(lock) {
-        if (activeAlarmId == alarmId) return true
-        stopLocked()
-        val appContext = context.applicationContext
-        val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            ?: return false
-        return try {
-            mediaPlayer = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build(),
-                )
-                setDataSource(appContext, alarmUri)
-                isLooping = true
-                prepare()
-                start()
-            }
-            vibrator = appContext.alarmVibrator().also { deviceVibrator ->
-                if (deviceVibrator.hasVibrator()) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        deviceVibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 500), 0))
-                    } else {
-                        @Suppress("DEPRECATION")
-                        deviceVibrator.vibrate(longArrayOf(0, 500, 500), 0)
+    /** [playSound] and [vibrate] reflect the user's Sound and Vibration notification preferences. */
+    fun start(context: Context, alarmId: Long, playSound: Boolean = true, vibrate: Boolean = true): Boolean =
+        synchronized(lock) {
+            if (activeAlarmId == alarmId) return true
+            stopLocked()
+            val appContext = context.applicationContext
+            return try {
+                if (playSound) {
+                    val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                        ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                    if (alarmUri != null) {
+                        mediaPlayer = MediaPlayer().apply {
+                            setAudioAttributes(
+                                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build(),
+                            )
+                            setDataSource(appContext, alarmUri)
+                            isLooping = true
+                            prepare()
+                            start()
+                        }
                     }
                 }
+                if (vibrate) {
+                    vibrator = appContext.alarmVibrator().also { deviceVibrator ->
+                        if (deviceVibrator.hasVibrator()) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                deviceVibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 500), 0))
+                            } else {
+                                @Suppress("DEPRECATION")
+                                deviceVibrator.vibrate(longArrayOf(0, 500, 500), 0)
+                            }
+                        }
+                    }
+                }
+                activeAlarmId = alarmId
+                true
+            } catch (_: Exception) {
+                stopLocked()
+                false
             }
-            activeAlarmId = alarmId
-            true
-        } catch (_: Exception) {
-            stopLocked()
-            false
         }
-    }
 
     fun stop(alarmId: Long? = null) = synchronized(lock) {
         if (alarmId == null || activeAlarmId == alarmId) stopLocked()

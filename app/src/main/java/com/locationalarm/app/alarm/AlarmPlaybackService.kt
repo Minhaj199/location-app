@@ -11,6 +11,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.locationalarm.app.data.AlarmRepository
+import com.locationalarm.app.data.SettingsStore
 import com.locationalarm.app.data.local.AppDatabase
 import com.locationalarm.app.data.model.Alarm
 import com.locationalarm.app.notification.AlarmNotificationHelper
@@ -113,7 +114,8 @@ class AlarmPlaybackService : Service() {
             stopSelf()
             return
         }
-        AlarmPlaybackManager.start(this, alarmId)
+        val settings = SettingsStore.read(applicationContext)
+        AlarmPlaybackManager.start(this, alarmId, settings.soundEnabled, settings.vibrationEnabled)
 
         if (alarmName.isNullOrBlank() || locationName.isNullOrBlank()) {
             serviceScope.launch {

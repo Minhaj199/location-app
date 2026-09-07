@@ -2,6 +2,7 @@ package com.locationalarm.app.alarm
 
 import android.content.Context
 import android.util.Log
+import com.locationalarm.app.data.SettingsStore
 import com.locationalarm.app.data.model.Alarm
 import com.locationalarm.app.notification.AlarmNotificationHelper
 
@@ -27,7 +28,8 @@ object AlarmTrigger {
             }
             // Best effort: the notification channel rings on its own, and this adds the looping
             // alarm tone when the platform still lets us open an audio track.
-            AlarmPlaybackManager.start(appContext, alarm.id)
+            val settings = SettingsStore.read(appContext)
+            AlarmPlaybackManager.start(appContext, alarm.id, settings.soundEnabled, settings.vibrationEnabled)
         }
     }
 

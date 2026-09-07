@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.locationalarm.app.alarm.AlarmPlaybackService
 import com.locationalarm.app.data.AlarmRepository
+import com.locationalarm.app.data.AppSettings
+import com.locationalarm.app.data.SettingsStore
 import com.locationalarm.app.data.model.Alarm
 import com.locationalarm.app.geofence.GeofenceManager
 import com.locationalarm.app.geofence.GeofenceOperationResult
@@ -28,9 +30,38 @@ class AlarmViewModel(
     )
     private val _geofenceStatus = MutableStateFlow<String?>(null)
     val geofenceStatus: StateFlow<String?> = _geofenceStatus
+    private val _settings = MutableStateFlow(SettingsStore.read(appContext))
+    val settings: StateFlow<AppSettings> = _settings
 
     init {
         registerEnabledAlarms()
+    }
+
+    /** The master switch: pausing it stops the watcher without touching saved alarms or prefs. */
+    fun setMonitoringEnabled(enabled: Boolean) = viewModelScope.launch {
+        SettingsStore.setMonitoringEnabled(appContext, enabled)
+        _settings.value = _settings.value.copy(monitoringEnabled = enabled)
+        syncMonitor()
+    }
+
+    fun setArrivalAlertsEnabled(enabled: Boolean) {
+        SettingsStore.setArrivalAlertsEnabled(appContext, enabled)
+        _settings.value = _settings.value.copy(arrivalAlertsEnabled = enabled)
+    }
+
+    fun setSoundEnabled(enabled: Boolean) {
+        SettingsStore.setSoundEnabled(appContext, enabled)
+        _settings.value = _settings.value.copy(soundEnabled = enabled)
+    }
+
+    fun setVibrationEnabled(enabled: Boolean) {
+        SettingsStore.setVibrationEnabled(appContext, enabled)
+        _settings.value = _settings.value.copy(vibrationEnabled = enabled)
+    }
+
+    fun setOngoingNotificationEnabled(enabled: Boolean) {
+        SettingsStore.setOngoingNotificationEnabled(appContext, enabled)
+        _settings.value = _settings.value.copy(ongoingNotificationEnabled = enabled)
     }
 
     fun save(alarm: Alarm) = viewModelScope.launch {
