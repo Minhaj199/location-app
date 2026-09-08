@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import com.locationalarm.app.data.model.Alarm
 import com.locationalarm.app.ui.location.LocationPickerScreen
 import com.locationalarm.app.ui.location.LocationSelection
+import com.locationalarm.app.ui.theme.LocalAppColors
 
 @Composable
 fun AlarmEditorScreen(
@@ -73,24 +75,28 @@ fun AlarmEditorScreen(
                 latitude = selection.latitude.toString()
                 longitude = selection.longitude.toString()
                 radius = selection.radiusMeters.toString()
+                // Prefill only if the user hasn't already typed their own place name.
+                if (locationName.isBlank()) selection.placeName?.let { locationName = it }
                 pickingLocation = false
             },
         )
         return
     }
 
-    val accent = Color(0xFF12B8F3)
+    val colors = LocalAppColors.current
+    val accent = colors.accent
     Box(modifier = modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxSize().background(Color(0xFF071A2B)))
+        Box(modifier = Modifier.fillMaxSize().background(colors.background))
         Box(
             modifier = Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
-                    listOf(Color(0x99030A13), Color(0x6A030A13), Color(0xE8040B15)),
+                    listOf(colors.backgroundGradientStart, colors.backgroundGradientStart, colors.backgroundGradientEnd),
                 ),
             ),
         )
         Column(
             modifier = Modifier.fillMaxSize()
+                .statusBarsPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 20.dp),
         ) {
@@ -101,12 +107,12 @@ fun AlarmEditorScreen(
             Text(
                 text = if (alarm == null) "New location alarm" else "Alarm details",
                 style = MaterialTheme.typography.headlineSmall,
-                color = Color.White,
+                color = colors.textPrimary,
             )
             Spacer(Modifier.height(6.dp))
             Text(
                 "Set the place and arrival distance for this alarm.",
-                color = Color.White.copy(alpha = 0.76f),
+                color = colors.textSecondary,
                 style = MaterialTheme.typography.bodyLarge,
             )
             Spacer(Modifier.height(24.dp))
@@ -114,8 +120,8 @@ fun AlarmEditorScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0x70101B2C)),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+                colors = CardDefaults.cardColors(containerColor = colors.surfaceOverlay),
+                border = BorderStroke(1.dp, colors.cardBorder),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
@@ -130,7 +136,7 @@ fun AlarmEditorScreen(
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                         shape = RoundedCornerShape(14.dp),
                         border = BorderStroke(1.dp, accent.copy(alpha = 0.85f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.textPrimary),
                     ) {
                         Text(if (latitude.isBlank() || longitude.isBlank()) "Select location on map" else "Change map location")
                     }
@@ -141,16 +147,16 @@ fun AlarmEditorScreen(
                         } else {
                             "Choose a point and arrival radius from the map."
                         },
-                        color = Color.White.copy(alpha = 0.68f),
+                        color = colors.textSecondary,
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Spacer(Modifier.height(20.dp))
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Alarm status", style = MaterialTheme.typography.titleSmall, color = Color.White)
+                            Text("Alarm status", style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
                             Text(
                                 if (enabled) "Active when you save" else "Saved as inactive",
-                                color = Color.White.copy(alpha = 0.68f),
+                                color = colors.textSecondary,
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
@@ -167,7 +173,7 @@ fun AlarmEditorScreen(
             }
             validationMessage?.let {
                 Spacer(Modifier.height(16.dp))
-                Text(it, color = Color(0xFFFFA7A0), style = MaterialTheme.typography.bodyMedium)
+                Text(it, color = colors.danger, style = MaterialTheme.typography.bodyMedium)
             }
             Spacer(Modifier.height(20.dp))
             Button(
@@ -198,7 +204,7 @@ fun AlarmEditorScreen(
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(54.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color(0xFF06111E)),
+                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = colors.onAccent),
                 shape = RoundedCornerShape(18.dp),
             ) { Text(if (alarm == null) "Activate alarm" else "Save changes") }
             if (alarm != null) {
@@ -207,8 +213,8 @@ fun AlarmEditorScreen(
                     onClick = { onDelete(alarm) },
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFA7A0)),
-                    border = BorderStroke(1.dp, Color(0xFFFFA7A0).copy(alpha = 0.7f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.danger),
+                    border = BorderStroke(1.dp, colors.danger.copy(alpha = 0.7f)),
                 ) { Text("Delete alarm") }
             }
             Spacer(Modifier.height(20.dp))
@@ -224,6 +230,7 @@ private fun EditorField(
     accent: Color,
     onValueChange: (String) -> Unit,
 ) {
+    val colors = LocalAppColors.current
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -232,12 +239,12 @@ private fun EditorField(
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = Color.White,
-            unfocusedTextColor = Color.White,
+            focusedTextColor = colors.textPrimary,
+            unfocusedTextColor = colors.textPrimary,
             focusedBorderColor = accent,
-            unfocusedBorderColor = Color.White.copy(alpha = 0.34f),
+            unfocusedBorderColor = colors.textSecondary.copy(alpha = 0.6f),
             focusedLabelColor = accent,
-            unfocusedLabelColor = Color.White.copy(alpha = 0.72f),
+            unfocusedLabelColor = colors.textSecondary,
             cursorColor = accent,
         ),
     )

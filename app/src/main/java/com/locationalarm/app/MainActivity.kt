@@ -8,6 +8,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -20,6 +21,7 @@ import com.locationalarm.app.ui.home.AlarmViewModel
 import com.locationalarm.app.ui.home.AlarmViewModelFactory
 import com.locationalarm.app.ui.home.LocationAlarmApp
 import com.locationalarm.app.ui.theme.LocationAlarmTheme
+import com.locationalarm.app.ui.theme.ThemeMode
 
 class MainActivity : ComponentActivity() {
     private var triggeredAlarmId by mutableStateOf<Long?>(null)
@@ -36,7 +38,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         handleAlarmIntent(intent)
         setContent {
-            LocationAlarmTheme {
+            val settings by viewModel.settings.collectAsState()
+            val themeMode = runCatching { ThemeMode.valueOf(settings.themeMode) }.getOrDefault(ThemeMode.SYSTEM)
+            LocationAlarmTheme(themeMode = themeMode) {
                 LocationAlarmApp(
                     viewModel = viewModel,
                     triggeredAlarmId = triggeredAlarmId,

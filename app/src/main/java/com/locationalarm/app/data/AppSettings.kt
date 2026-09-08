@@ -9,6 +9,8 @@ data class AppSettings(
     val soundEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
     val ongoingNotificationEnabled: Boolean = true,
+    // Stored as the name of com.locationalarm.app.ui.theme.ThemeMode ("LIGHT"/"DARK"/"SYSTEM").
+    val themeMode: String = "SYSTEM",
 )
 
 /**
@@ -27,6 +29,7 @@ object SettingsStore {
             soundEnabled = prefs.getBoolean(KeySound, true),
             vibrationEnabled = prefs.getBoolean(KeyVibration, true),
             ongoingNotificationEnabled = prefs.getBoolean(KeyOngoing, true),
+            themeMode = prefs.getString(KeyThemeMode, "SYSTEM") ?: "SYSTEM",
         )
     }
 
@@ -45,6 +48,9 @@ object SettingsStore {
     fun setOngoingNotificationEnabled(context: Context, enabled: Boolean) =
         preferences(context).edit().putBoolean(KeyOngoing, enabled).apply()
 
+    fun setThemeMode(context: Context, themeMode: String) =
+        preferences(context).edit().putString(KeyThemeMode, themeMode).apply()
+
     private fun preferences(context: Context) =
         context.applicationContext.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE)
 
@@ -54,4 +60,5 @@ object SettingsStore {
     private const val KeySound = "sound_enabled"
     private const val KeyVibration = "vibration_enabled"
     private const val KeyOngoing = "ongoing_notification_enabled"
+    private const val KeyThemeMode = "theme_mode"
 }

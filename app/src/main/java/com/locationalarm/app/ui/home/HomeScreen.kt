@@ -11,10 +11,10 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
@@ -31,7 +31,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -73,15 +75,12 @@ import com.locationalarm.app.notification.AlarmNotificationHelper
 import com.locationalarm.app.ui.alarm.AlarmTriggeredScreen
 import com.locationalarm.app.ui.settings.NotificationSettingsScreen
 import com.locationalarm.app.ui.settings.SettingsScreen
-import com.locationalarm.app.ui.theme.Border
-import com.locationalarm.app.ui.theme.DeepNavy
-import com.locationalarm.app.ui.theme.ForestGreen
-import com.locationalarm.app.ui.theme.MutedRed
-import com.locationalarm.app.ui.theme.SecondaryText
-import com.locationalarm.app.ui.theme.SlateBlue
-import com.locationalarm.app.ui.theme.WarmAmber
+import com.locationalarm.app.ui.theme.LocalAppColors
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.core.location.LocationManagerCompat
+import android.location.LocationManager
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.delay
@@ -110,6 +109,7 @@ fun LocationAlarmApp(
     val alarms by viewModel.alarms.collectAsState()
     val geofenceStatus by viewModel.geofenceStatus.collectAsState()
     val settings by viewModel.settings.collectAsState()
+    val homePlace by viewModel.homePlace.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val permissionPreferences = remember(context) {
@@ -129,6 +129,8 @@ fun LocationAlarmApp(
         )
     }
     var hasLocationPermission by remember { mutableStateOf(context.hasHomeLocationPermission()) }
+    var hasBackgroundLocationPermission by remember { mutableStateOf(context.hasBackgroundLocationPermission()) }
+    var locationServicesEnabled by remember { mutableStateOf(context.isLocationServicesEnabled()) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> notificationPermissionGranted = granted }
@@ -140,6 +142,8 @@ fun LocationAlarmApp(
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationPermissionGranted = AlarmNotificationHelper(context).canPostNotifications()
                 hasLocationPermission = context.hasHomeLocationPermission()
+                hasBackgroundLocationPermission = context.hasBackgroundLocationPermission()
+                locationServicesEnabled = context.isLocationServicesEnabled()
                 // The user may have just granted the exemption in system settings.
                 backgroundMayBeRestricted = isBatteryRestricted()
             }
@@ -227,6 +231,13 @@ fun LocationAlarmApp(
                     arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
                 )
             },
+            hasBackgroundLocationPermission = hasBackgroundLocationPermission,
+            locationServicesEnabled = locationServicesEnabled,
+            onOpenLocationSettings = {
+                context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            },
+            homePlace = homePlace,
+            onLocationSample = viewModel::onLocationSample,
             modifier = modifier,
         )
 
@@ -246,6 +257,7 @@ fun LocationAlarmApp(
             onBack = { destination = HomeDestination.List },
             onMonitoringChange = viewModel::setMonitoringEnabled,
             onOpenNotifications = { destination = HomeDestination.Notifications },
+            onThemeModeChange = viewModel::setThemeMode,
             modifier = modifier,
         )
 
@@ -297,183 +309,322 @@ fun HomeScreen(
     onReviewBackgroundSettings: () -> Unit,
     hasLocationPermission: Boolean,
     onRequestLocationPermission: () -> Unit,
+    hasBackgroundLocationPermission: Boolean,
+    locationServicesEnabled: Boolean,
+    onOpenLocationSettings: () -> Unit,
+    homePlace: HomePlaceState,
+    onLocationSample: (Location) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val colors = LocalAppColors.current
     val now by rememberCurrentTime()
     val period = getTimeOfDay(now)
-    val locationState = rememberHomeLocation(hasLocationPermission)
+    val locationState = rememberHomeLocation(hasLocationPermission, onLocationSample)
     val activeAlarms = alarms.filter(Alarm::enabled)
-    val nearestAlarm = activeAlarms.minByOrNull { alarm ->
-        locationState.location?.distanceTo(alarm) ?: Float.MAX_VALUE
+
+    // Independent warnings collapse into a single list so the section disappears completely (no
+    // empty space) once every underlying issue is resolved. Each one maps to a real, currently-
+    // actionable monitoring prerequisite instead of a single catch-all message.
+    val warnings = buildList {
+        geofenceStatus?.let { add(it to onRequestBackgroundLocation) }
+        if (hasLocationPermission && !hasBackgroundLocationPermission) {
+            // Only relevant once foreground permission is granted; not shown once the user has
+            // already granted "Allow all the time".
+            add("Location alerts may be delayed" to onRequestBackgroundLocation)
+        }
+        if (hasLocationPermission && !locationServicesEnabled) {
+            add("Location services are turned off" to onOpenLocationSettings)
+        }
+        if (notificationPermissionMissing) add("Notifications are off" to onRequestNotificationPermission)
+        if (hasLocationPermission && hasBackgroundLocationPermission && backgroundMayBeRestricted) {
+            add("Battery settings may delay alerts" to onReviewBackgroundSettings)
+        }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
-        Crossfade(targetState = period, label = "time of day background") { activePeriod ->
-            TimeBackground(activePeriod)
-        }
-        Box(
-            modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    listOf(Color(0x9D030A13), Color.Transparent, Color(0xE8040B15)),
-                ),
-            ),
-        )
+    Box(modifier = modifier.fillMaxSize().background(colors.background)) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 28.dp),
+            modifier = Modifier.fillMaxSize().statusBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 24.dp)
+                .padding(top = 12.dp),
         ) {
-            WelcomeHeader(
-                now = now,
-                period = period,
-                location = locationState,
-                hasLocationPermission = hasLocationPermission,
-                onRequestLocationPermission = onRequestLocationPermission,
-            )
-            geofenceStatus?.let { status ->
-                CompactStatus(status, period.accent, onRequestBackgroundLocation)
-            }
-            if (notificationPermissionMissing) {
-                CompactStatus("Notifications are off", period.accent, onRequestNotificationPermission)
-            }
-            if (backgroundMayBeRestricted) {
-                CompactStatus("Location alerts may be delayed", period.accent, onReviewBackgroundSettings)
-            }
-            Spacer(Modifier.weight(1f))
-            if (monitoringEnabled) {
-                ActiveAlarmsCard(activeAlarms, nearestAlarm, period.accent)
-            } else {
-                MonitoringPausedCard(
-                    pausedAlarmCount = activeAlarms.size,
-                    accent = period.accent,
+            HomeHeader(now = now, greeting = period.greeting)
+            Spacer(Modifier.height(16.dp))
+            Column(
+                modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                CurrentLocationCard(
+                    period = period,
+                    locationState = locationState,
+                    homePlace = homePlace,
+                    now = now,
+                    hasLocationPermission = hasLocationPermission,
+                    onRequestLocationPermission = onRequestLocationPermission,
+                )
+                warnings.forEach { (message, onReview) -> WarningCard(message, onReview) }
+                ActiveAlarmsSection(
+                    monitoringEnabled = monitoringEnabled,
+                    activeAlarms = activeAlarms,
+                    locationState = locationState,
                     onEnableMonitoring = onEnableMonitoring,
+                    onShowAlarms = onShowAlarms,
                 )
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
             Button(
                 onClick = onCreateAlarm,
-                modifier = Modifier.fillMaxWidth().height(54.dp),
+                modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(18.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = period.accent, contentColor = Color(0xFF06111E)),
+                colors = ButtonDefaults.buttonColors(containerColor = colors.accent, contentColor = colors.onAccent),
             ) {
-                Text("+  Create Location Alarm", style = MaterialTheme.typography.titleMedium)
+                Text("+  Create Location Alarm", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             }
             Spacer(Modifier.height(12.dp))
-            MinimalNavigation(period.accent, onShowAlarms, onShowSettings)
+            HomeBottomNavigation(onShowAlarms, onShowSettings)
         }
     }
 }
 
 @Composable
-private fun TimeBackground(period: TimeOfDay) {
-    val context = LocalContext.current
-    val image = remember(period.backgroundAsset) {
-        context.assets.open(period.backgroundAsset).use(BitmapFactory::decodeStream).asImageBitmap()
+private fun HomeHeader(now: Long, greeting: String) {
+    val colors = LocalAppColors.current
+    val date = remember(now) { SimpleDateFormat("d MMMM, yyyy", Locale.getDefault()).format(Date(now)) }
+    val time = remember(now) { SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(now)) }
+    Column {
+        Text(greeting, color = colors.textPrimary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        Text(date, color = colors.textSecondary, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(4.dp))
+        Text(time, color = colors.textPrimary, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
     }
-    Image(
-        bitmap = image,
-        contentDescription = null,
-        modifier = Modifier.fillMaxSize(),
-        contentScale = ContentScale.Crop,
-    )
 }
 
+/** The one place imagery is allowed: a subtle, faded time-of-day illustration inside this card only. */
 @Composable
-private fun WelcomeHeader(
-    now: Long,
+private fun CurrentLocationCard(
     period: TimeOfDay,
-    location: HomeLocationState,
+    locationState: HomeLocationState,
+    homePlace: HomePlaceState,
+    now: Long,
     hasLocationPermission: Boolean,
     onRequestLocationPermission: () -> Unit,
 ) {
-    val time = remember(now) { SimpleDateFormat("h:mm", Locale.getDefault()).format(Date(now)) }
-    val dayPeriod = remember(now) { SimpleDateFormat("a", Locale.getDefault()).format(Date(now)) }
-    val date = remember(now) { SimpleDateFormat("d MMMM, yyyy", Locale.getDefault()).format(Date(now)) }
-    Column {
-        Text(period.greeting, color = Color.White, style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(4.dp))
-        Text(date, color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodyLarge)
-        Spacer(Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(time, color = Color.White, style = MaterialTheme.typography.displayLarge)
-            Spacer(Modifier.width(8.dp))
-            Text(dayPeriod, modifier = Modifier.padding(bottom = 8.dp), color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.titleMedium)
+    val context = LocalContext.current
+    val backgroundImage = remember(period.backgroundAsset) {
+        runCatching { context.assets.open(period.backgroundAsset).use(BitmapFactory::decodeStream).asImageBitmap() }.getOrNull()
+    }
+    val mainText = when {
+        !hasLocationPermission -> "Location access is off"
+        locationState.isLoading -> "Finding your location..."
+        locationState.location == null -> "Location unavailable"
+        homePlace.label != null -> homePlace.label
+        else -> "Accuracy ${locationState.location.accuracy.toInt()} m"
+    }
+    val metaParts = buildList {
+        if (locationState.location != null && homePlace.label != null) {
+            add("Accuracy ${locationState.location.accuracy.toInt()} m")
         }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = when {
-                !hasLocationPermission -> "Location unavailable"
-                location.isLoading -> "Finding your location..."
-                else -> "Current location"
-            },
-            color = Color.White.copy(alpha = 0.9f),
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        if (!hasLocationPermission) {
-            TextButton(onClick = onRequestLocationPermission, contentPadding = PaddingValues(top = 2.dp)) {
-                Text("Enable location", color = period.accent)
-            }
-        } else if (location.location != null) {
-            Text("Accuracy ${location.location.accuracy.toInt()} m", color = Color.White.copy(alpha = 0.65f), style = MaterialTheme.typography.bodySmall)
+        when {
+            homePlace.isResolving -> add("Updating location\u2026")
+            homePlace.updatedAtMillis != null -> add(formatRelativeUpdated(now, homePlace.updatedAtMillis))
         }
     }
-}
 
-@Composable
-private fun ActiveAlarmsCard(
-    activeAlarms: List<Alarm>,
-    nearestAlarm: Alarm?,
-    accent: Color,
-) {
+    val colors = LocalAppColors.current
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0x42101B2C)),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        border = BorderStroke(1.dp, colors.cardBorder),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 15.dp, vertical = 12.dp)) {
-            Text(
-                if (activeAlarms.isEmpty()) "No active alarms" else "\uD83D\uDD14 ${activeAlarms.size} Active Location Alarms",
-                color = accent,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            if (nearestAlarm == null) {
-                Spacer(Modifier.height(5.dp))
-                Text("Create an alarm to get started", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.bodySmall)
+        Box(modifier = Modifier.fillMaxWidth().height(150.dp)) {
+            if (backgroundImage != null) {
+                Image(
+                    bitmap = backgroundImage,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+                // Only a subtle, localized scrim behind the text - the photo itself stays clear.
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(92.dp).align(Alignment.BottomStart).background(
+                        Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))),
+                    ),
+                )
             } else {
-                Spacer(Modifier.height(4.dp))
-                Text("Next: ${nearestAlarm.name}", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                Text("Alert when I arrive", color = Color.White.copy(alpha = 0.68f), style = MaterialTheme.typography.bodySmall)
+                Box(modifier = Modifier.fillMaxSize().background(colors.surface))
+            }
+            val onImageText = if (backgroundImage != null) Color.White else colors.textPrimary
+            val onImageSecondaryText = if (backgroundImage != null) Color.White.copy(alpha = 0.85f) else colors.textSecondary
+            val labelColor = if (backgroundImage != null) Color.White else colors.accent
+            Column(modifier = Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                Text("\uD83D\uDCCD Current location", color = labelColor, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Column {
+                    Text(
+                        mainText,
+                        color = onImageText,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (!hasLocationPermission) {
+                        TextButton(onClick = onRequestLocationPermission, contentPadding = PaddingValues(0.dp)) {
+                            Text("Enable location", color = onImageText)
+                        }
+                    } else if (metaParts.isNotEmpty()) {
+                        Text(metaParts.joinToString(" \u00B7 "), color = onImageSecondaryText, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MonitoringPausedCard(
-    pausedAlarmCount: Int,
-    accent: Color,
-    onEnableMonitoring: () -> Unit,
-) {
+private fun WarningCard(message: String, onReview: () -> Unit) {
+    val colors = LocalAppColors.current
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0x522C1810)),
-        border = BorderStroke(1.dp, WarmAmber.copy(alpha = 0.45f)),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.warningSurface),
+        border = BorderStroke(1.dp, colors.warningBorder.copy(alpha = 0.6f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 15.dp, vertical = 12.dp)) {
-            Text("\u26A0 Location monitoring is off", color = WarmAmber, style = MaterialTheme.typography.labelLarge)
-            Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("\u26A0", color = colors.warningText, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.width(10.dp))
             Text(
-                "Your location alarms are currently paused.",
-                color = Color.White.copy(alpha = 0.84f),
-                style = MaterialTheme.typography.bodySmall,
+                message,
+                modifier = Modifier.weight(1f),
+                color = colors.warningText,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
             )
+            TextButton(onClick = onReview, contentPadding = PaddingValues(start = 8.dp)) {
+                Text("Review \u203A", color = colors.accent, style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActiveAlarmsSection(
+    monitoringEnabled: Boolean,
+    activeAlarms: List<Alarm>,
+    locationState: HomeLocationState,
+    onEnableMonitoring: () -> Unit,
+    onShowAlarms: () -> Unit,
+) {
+    val colors = LocalAppColors.current
+    if (!monitoringEnabled) {
+        MonitoringPausedCard(pausedAlarmCount = activeAlarms.size, onEnableMonitoring = onEnableMonitoring)
+        return
+    }
+    if (activeAlarms.isEmpty()) {
+        EmptyAlarmsCard()
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Active Alarms", color = colors.textPrimary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            if (activeAlarms.size > HomeAlarmPreviewLimit) {
+                TextButton(onClick = onShowAlarms, contentPadding = PaddingValues(0.dp)) {
+                    Text("View All \u203A", color = colors.accent, style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        }
+        activeAlarms.take(HomeAlarmPreviewLimit).forEach { alarm ->
+            HomeAlarmPreviewCard(alarm, locationState)
+        }
+    }
+}
+
+@Composable
+private fun HomeAlarmPreviewCard(alarm: Alarm, locationState: HomeLocationState) {
+    val colors = LocalAppColors.current
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        border = BorderStroke(1.dp, colors.cardBorder),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(alarm.iconGlyph(), style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    alarm.name,
+                    color = colors.textPrimary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text("Alert when I arrive", color = colors.textSecondary, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = when {
+                        locationState.location != null -> locationState.location.distanceTo(alarm).formatDistance()
+                        locationState.isLoading -> "Checking distance..."
+                        else -> "Distance unavailable"
+                    },
+                    color = colors.accent,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            Text("\u22EE", color = colors.textSecondary, style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+@Composable
+private fun EmptyAlarmsCard() {
+    val colors = LocalAppColors.current
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        border = BorderStroke(1.dp, colors.cardBorder),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp)) {
+            Text("No active alarms", color = colors.textPrimary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text("Create an alarm to get started.", color = colors.textSecondary, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun MonitoringPausedCard(pausedAlarmCount: Int, onEnableMonitoring: () -> Unit) {
+    val colors = LocalAppColors.current
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.warningSurface),
+        border = BorderStroke(1.dp, colors.warningBorder.copy(alpha = 0.6f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Text("\u26A0 Location monitoring is off", color = colors.warningText, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text("Your location alarms are currently paused.", color = colors.warningText.copy(alpha = 0.85f), style = MaterialTheme.typography.bodySmall)
             if (pausedAlarmCount > 0) {
                 Spacer(Modifier.height(2.dp))
                 Text(
                     "$pausedAlarmCount ${if (pausedAlarmCount == 1) "alarm" else "alarms"} paused",
-                    color = Color.White.copy(alpha = 0.68f),
+                    color = colors.warningText.copy(alpha = 0.7f),
                     style = MaterialTheme.typography.labelMedium,
                 )
             }
@@ -482,7 +633,7 @@ private fun MonitoringPausedCard(
                 onClick = onEnableMonitoring,
                 modifier = Modifier.fillMaxWidth().height(42.dp),
                 shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color(0xFF06111E)),
+                colors = ButtonDefaults.buttonColors(containerColor = colors.accent, contentColor = colors.onAccent),
             ) {
                 Text("Turn On Monitoring", style = MaterialTheme.typography.labelLarge)
             }
@@ -491,44 +642,60 @@ private fun MonitoringPausedCard(
 }
 
 @Composable
-private fun CompactStatus(message: String, accent: Color, onReview: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(message, modifier = Modifier.weight(1f), color = Color.White.copy(alpha = 0.88f), style = MaterialTheme.typography.bodySmall)
-        TextButton(onClick = onReview, contentPadding = PaddingValues(start = 10.dp)) {
-            Text("Review", color = accent, style = MaterialTheme.typography.labelLarge)
-        }
-    }
-}
-
-@Composable
-private fun MinimalNavigation(accent: Color, onShowAlarms: () -> Unit, onShowSettings: () -> Unit) {
+private fun HomeBottomNavigation(onShowAlarms: () -> Unit, onShowSettings: () -> Unit) {
+    val colors = LocalAppColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color(0x4D06101C))
-            .padding(vertical = 10.dp, horizontal = 14.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(colors.surface)
+            .border(1.dp, colors.cardBorder, RoundedCornerShape(20.dp))
+            .padding(vertical = 10.dp, horizontal = 8.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        NavigationLabel("Home", accent)
-        NavigationLabel("Alarms", Color.White.copy(alpha = 0.72f), onShowAlarms)
-        NavigationLabel("Places", Color.White.copy(alpha = 0.72f))
-        NavigationLabel("Settings", Color.White.copy(alpha = 0.72f), onShowSettings)
+        HomeNavItem("\uD83C\uDFE0", "Home", selected = true)
+        HomeNavItem("\uD83D\uDD14", "Alarms", onClick = onShowAlarms)
+        HomeNavItem("\uD83D\uDCCD", "Places")
+        HomeNavItem("\u2699\uFE0F", "Settings", onClick = onShowSettings)
     }
 }
 
 @Composable
-private fun NavigationLabel(label: String, color: Color, onClick: (() -> Unit)? = null) {
-    Text(
-        label,
+private fun HomeNavItem(icon: String, label: String, selected: Boolean = false, onClick: (() -> Unit)? = null) {
+    val colors = LocalAppColors.current
+    val tint = if (selected) colors.accent else colors.textSecondary
+    Column(
         modifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick),
-        color = color,
-        style = MaterialTheme.typography.labelLarge,
-    )
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(icon, style = MaterialTheme.typography.titleMedium)
+        Text(label, color = tint, style = MaterialTheme.typography.labelSmall, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+    }
+}
+
+private const val HomeAlarmPreviewLimit = 3
+
+private fun Alarm.iconGlyph(): String {
+    val text = name.lowercase(Locale.getDefault())
+    return when {
+        "office" in text || "work" in text -> "\uD83D\uDCBC"
+        "market" in text || "store" in text || "shop" in text || "mall" in text -> "\uD83D\uDED2"
+        "home" in text || "house" in text -> "\uD83C\uDFE0"
+        "school" in text || "college" in text -> "\uD83C\uDF93"
+        "gym" in text -> "\uD83C\uDFCB"
+        else -> "\uD83D\uDCCD"
+    }
+}
+
+private fun formatRelativeUpdated(now: Long, updatedAtMillis: Long): String {
+    val minutes = (now - updatedAtMillis).coerceAtLeast(0) / 60_000L
+    return when {
+        minutes < 1 -> "Updated just now"
+        minutes == 1L -> "Updated 1 min ago"
+        minutes < 60 -> "Updated $minutes min ago"
+        else -> "Updated ${minutes / 60}h ago"
+    }
 }
 
 @Composable
@@ -542,26 +709,27 @@ private fun AlarmListScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val colors = LocalAppColors.current
     val hasLocationPermission = context.hasHomeLocationPermission()
     val locationState = rememberHomeLocation(hasLocationPermission)
     var pendingDelete by remember { mutableStateOf<Alarm?>(null) }
     Box(modifier = modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxSize().background(DeepNavy))
+        Box(modifier = Modifier.fillMaxSize().background(colors.background))
         Box(
             modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(listOf(Color(0xA5030A13), Color(0xCC040B15))),
+                Brush.verticalGradient(listOf(colors.backgroundGradientStart, colors.backgroundGradientEnd)),
             ),
         )
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 28.dp)) {
+        Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 20.dp, vertical = 28.dp)) {
             TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
-                Text("Back", color = ForestGreen)
+                Text("Back", color = colors.accent)
             }
             Spacer(Modifier.height(10.dp))
-            Text("Your Location Alarms", color = Color.White, style = MaterialTheme.typography.headlineSmall)
+            Text("Your Location Alarms", color = colors.textPrimary, style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(6.dp))
             Text(
                 "Tap an alarm to edit it.",
-                color = Color.White.copy(alpha = 0.72f),
+                color = colors.textSecondary,
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(Modifier.height(20.dp))
@@ -580,7 +748,7 @@ private fun AlarmListScreen(
                             currentLocation = locationState.location,
                             isLocationLoading = locationState.isLoading,
                             hasLocationPermission = hasLocationPermission,
-                            accent = ForestGreen,
+                            accent = colors.accent,
                             onClick = onAlarmClick,
                             onEnabledChange = onEnabledChange,
                             onDeleteRequest = { pendingDelete = it },
@@ -592,7 +760,7 @@ private fun AlarmListScreen(
                 onClick = onCreateAlarm,
                 modifier = Modifier.fillMaxWidth().height(54.dp),
                 shape = RoundedCornerShape(18.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color(0xFF06111E)),
+                colors = ButtonDefaults.buttonColors(containerColor = colors.accent, contentColor = colors.onAccent),
             ) {
                 Text("+  Create Location Alarm", style = MaterialTheme.typography.titleMedium)
             }
@@ -601,20 +769,20 @@ private fun AlarmListScreen(
         pendingDelete?.let { alarm ->
             AlertDialog(
                 onDismissRequest = { pendingDelete = null },
-                title = { Text("Delete location alarm?", color = Color.White) },
-                text = { Text("${alarm.name} will be permanently removed.", color = SecondaryText) },
-                containerColor = SlateBlue,
+                title = { Text("Delete location alarm?", color = colors.textPrimary) },
+                text = { Text("${alarm.name} will be permanently removed.", color = colors.textSecondary) },
+                containerColor = colors.surface,
                 confirmButton = {
                     TextButton(onClick = {
                         onDelete(alarm)
                         pendingDelete = null
                     }) {
-                        Text("Delete", color = MutedRed)
+                        Text("Delete", color = colors.danger)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { pendingDelete = null }) {
-                        Text("Cancel", color = Color.White.copy(alpha = 0.8f))
+                        Text("Cancel", color = colors.textSecondary)
                     }
                 },
             )
@@ -623,38 +791,12 @@ private fun AlarmListScreen(
 }
 
 @Composable
-private fun CurrentLocationCard(
-    locationState: HomeLocationState,
-    hasLocationPermission: Boolean,
-    accent: Color,
-    onRequestLocationPermission: () -> Unit,
-) {
-    GlassCard {
-        Text("Current Location", color = accent, style = MaterialTheme.typography.labelLarge)
-        Spacer(Modifier.height(7.dp))
-        when {
-            !hasLocationPermission -> {
-                Text("Location access is off", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                TextButton(onClick = onRequestLocationPermission, contentPadding = PaddingValues(0.dp)) {
-                    Text("Enable location access", color = accent)
-                }
-            }
-            locationState.isLoading -> Text("Finding your current position...", color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.bodyMedium)
-            locationState.location == null -> Text("Current position is unavailable. Check location services and try again.", color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.bodyMedium)
-            else -> {
-                Text(locationState.location.formatCoordinates(), color = Color.White, style = MaterialTheme.typography.titleMedium)
-                Text("Accuracy: ${locationState.location.accuracy.toInt()} m", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-    }
-}
-
-@Composable
 private fun EmptyAlarmState() {
+    val colors = LocalAppColors.current
     GlassCard {
-        Text("No Location Alarms Yet", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        Text("No Location Alarms Yet", color = colors.textPrimary, style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(6.dp))
-        Text("Create an alarm and get alerted when you arrive at a place.", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.bodyMedium)
+        Text("Create an alarm and get alerted when you arrive at a place.", color = colors.textSecondary, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -682,28 +824,30 @@ private fun AlarmCard(
         enableDismissFromStartToEnd = false,
         enableDismissFromEndToStart = true,
         backgroundContent = {
+            val colors = LocalAppColors.current
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(14.dp))
-                    .background(MutedRed),
+                    .background(colors.danger),
                 contentAlignment = Alignment.CenterEnd,
             ) {
                 Text(
                     "DELETE",
                     modifier = Modifier.padding(horizontal = 22.dp),
-                    color = Color.White,
+                    color = colors.onDanger,
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.labelLarge,
                 )
             }
         },
     ) {
+    val colors = LocalAppColors.current
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick(alarm) },
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xE6102A40)),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+        colors = CardDefaults.cardColors(containerColor = colors.surfaceOverlay),
+        border = BorderStroke(1.dp, colors.cardBorder),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Row(
@@ -714,7 +858,7 @@ private fun AlarmCard(
                 Text(
                     text = "\uD83D\uDCCD ${alarm.name}",
                     style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
+                    color = colors.textPrimary,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -722,7 +866,7 @@ private fun AlarmCard(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = "Alert when I arrive",
-                    color = SecondaryText,
+                    color = colors.textSecondary,
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -735,7 +879,7 @@ private fun AlarmCard(
                         !hasLocationPermission -> "Location unavailable"
                         else -> "Distance unavailable"
                     },
-                    color = Color(0xFFA8B5C1),
+                    color = colors.textSecondary,
                     style = MaterialTheme.typography.labelLarge,
                 )
             }
@@ -747,7 +891,7 @@ private fun AlarmCard(
                     checkedThumbColor = Color.White,
                     checkedTrackColor = accent,
                     uncheckedThumbColor = Color.White,
-                    uncheckedTrackColor = SecondaryText.copy(alpha = 0.55f),
+                    uncheckedTrackColor = colors.textSecondary.copy(alpha = 0.55f),
                 ),
             )
         }
@@ -757,11 +901,12 @@ private fun AlarmCard(
 
 @Composable
 private fun GlassCard(content: @Composable ColumnScope.() -> Unit) {
+    val colors = LocalAppColors.current
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xA6101B2C)),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.17f)),
+        colors = CardDefaults.cardColors(containerColor = colors.surfaceOverlay),
+        border = BorderStroke(1.dp, colors.cardBorder),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column(modifier = Modifier.padding(18.dp), content = content)
@@ -775,8 +920,9 @@ private fun HomeNotice(
     actionLabel: String? = "Review settings",
     onAction: () -> Unit,
 ) {
+    val colors = LocalAppColors.current
     GlassCard {
-        Text(message, color = Color.White.copy(alpha = 0.88f), style = MaterialTheme.typography.bodyMedium)
+        Text(message, color = colors.textPrimary, style = MaterialTheme.typography.bodyMedium)
         if (actionLabel != null) {
             TextButton(onClick = onAction, contentPadding = PaddingValues(top = 4.dp)) {
                 Text(actionLabel, color = accent)
@@ -788,7 +934,7 @@ private fun HomeNotice(
 private data class HomeLocationState(val location: Location?, val isLoading: Boolean)
 
 @Composable
-private fun rememberHomeLocation(hasPermission: Boolean): HomeLocationState {
+private fun rememberHomeLocation(hasPermission: Boolean, onLocationSample: ((Location) -> Unit)? = null): HomeLocationState {
     val context = LocalContext.current
     var location by remember(hasPermission) { mutableStateOf<Location?>(null) }
     var loading by remember(hasPermission) { mutableStateOf(hasPermission) }
@@ -799,7 +945,11 @@ private fun rememberHomeLocation(hasPermission: Boolean): HomeLocationState {
             return@LaunchedEffect
         }
         LocationServices.getFusedLocationProviderClient(context).lastLocation
-            .addOnSuccessListener { result -> location = result; loading = false }
+            .addOnSuccessListener { result ->
+                location = result
+                loading = false
+                result?.let { onLocationSample?.invoke(it) }
+            }
             .addOnFailureListener { loading = false }
     }
     return HomeLocationState(location, loading)
@@ -831,3 +981,14 @@ private fun Location.formatCoordinates(): String =
 private fun Context.hasHomeLocationPermission(): Boolean =
     ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
         ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+/** Below API 29 the base grant already covers background delivery; there is no separate permission. */
+private fun Context.hasBackgroundLocationPermission(): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+
+private fun Context.isLocationServicesEnabled(): Boolean {
+    val manager = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return false
+    return LocationManagerCompat.isLocationEnabled(manager)
+}
